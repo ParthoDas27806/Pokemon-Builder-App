@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pokédex Terminal</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #15181D; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: #2A3038; border-radius: 3px; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.8s linear infinite; }
+  @keyframes scanIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+/* ---------------- tokens ---------------- */
+const INK = "#15181D", PANEL = "#1D2228", LINE = "#2A3038", CREAM = "#ECE7DA",
+      DIM = "#8B9099", SCAN = "#E5483D", DATA = "#5FD9C4", WARN = "#E8B548";
+const MONO = "'JetBrains Mono', 'Courier New', monospace";
+
+const TYPE_COLORS = {
+  normal:"#A4A290", fire:"#E5602C", water:"#3E8FD0", electric:"#E8C53A",
+  grass:"#5FAE4A", ice:"#6FCFCB", fighting:"#C2483A", poison:"#9B4F9E",
+  ground:"#C2A24A", flying:"#8FA6E0", psychic:"#E0598B", bug:"#9CB52A",
+  rock:"#ABA05A", ghost:"#6E5A99", dragon:"#5F58D6", dark:"#5B5466",
+  steel:"#8C9AAB", fairy:"#E596D9",
+};
+const TYPE_LIST = Object.keys(TYPE_COLORS);
+
+const ATK_CHART = {
+  normal:{rock:0.5,ghost:0,steel:0.5},
+  fire:{fire:0.5,water:0.5,grass:2,ice:2,bug:2,rock:0.5,dragon:0.5,steel:2},
+  water:{fire:2,water:0.5,grass:0.5,ground:2,rock:2,dragon:0.5},
+  electric:{water:2,electric:0.5,grass:0.5,ground:0,flying:2,dragon:0.5},
+  grass:{fire:0.5,water:2,grass:0.5,poison:0.5,ground:2,flying:0.5,bug:0.5,rock:2,dragon:0.5,steel:0.5},
+  ice:{fire:0.5,water:0.5,grass:2,ice:0.5,ground:2,flying:2,dragon:2,steel:0.5},
+  fighting:{normal:2,ice:2,poison:0.5,flying:0.5,psychic:0.5,bug:0.5,rock:2,ghost:0,dark:2,steel:2,fairy:0.5},
+  poison:{grass:2,poison:0.5,ground:0.5,rock:0.5,ghost:0.5,steel:0,fairy:2},
+  ground:{fire:2,grass:0.5,electric:2,poison:2,flying:0,bug:0.5,rock:2,steel:2},
+  flying:{electric:0.5,grass:2,fighting:2,bug:2,rock:0.5,steel:0.5},
+  psychic:{fighting:2,poison:2,psychic:0.5,dark:0,steel:0.5},
+  bug:{fire:0.5,grass:2,fighting:0.5,poison:0.5,flying:0.5,psychic:2,ghost:0.5,dark:2,steel:0.5,fairy:0.5},
+  rock:{fire:2,ice:2,fighting:0.5,ground:0.5,flying:2,bug:2,steel:0.5},
+  ghost:{normal:0,psychic:2,ghost:2,dark:0.5},
+  dragon:{dragon:2,steel:0.5,fairy:0},
+  dark:{fighting:0.5,psychic:2,ghost:2,dark:0.5,fairy:0.5},
+  steel:{fire:0.5,water:0.5,electric:0.5,ice:2,rock:2,steel:0.5,fairy:2},
+  fairy:{fire:0.5,fighting:2,poison:0.5,dragon:2,dark:2,steel:0.5},
+};
+function mult(atk, def) { return (ATK_CHART[atk] && ATK_CHART[atk][def]) ?? 1; }
+function comboMultiplier(atk, defTypes) { return defTypes.reduce((m, d) => m * mult(atk, d), 1); }
+
+const API = "https://pokeapi.co/api/v2";
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Request failed: " + res.status);
+  return res.json();
+}
+function spriteUrl(id) { return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`; }
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function prettyName(s) { return s.split("-").map(cap).join(" "); }
+
+/* ---------------- tiny inline icon set (no external icon lib needed) ---------------- */
+function Icon({ d, size = 15, color = "currentColor", children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  );
+}
+const SearchIcon = (p) => <Icon {...p}><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></Icon>;
+const ChevronRightIcon = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6" /></Icon>;
+const ChevronDownIcon = (p) => <Icon {...p}><polyline points="6 9 12 15 18 9" /></Icon>;
+const XIcon = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></Icon>;
+const CheckIcon = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12" /></Icon>;
+const AlertIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></Icon>;
+const SpinIcon = (p) => <span className="spin" style={{ display: "inline-flex" }}><Icon {...p}><path d="M21 12a9 9 0 1 1-9-9" /></Icon></span>;
+const BookIcon = (p) => <Icon {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></Icon>;
+const SwordsIcon = (p) => <Icon {...p}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" /><line x1="13" y1="19" x2="19" y2="13" /><line x1="16" y1="16" x2="20" y2="20" /><line x1="19" y1="21" x2="21" y2="19" /></Icon>;
+const UsersIcon = (p) => <Icon {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></Icon>;
+
+/* ---------------- small UI atoms ---------------- */
+function TypeChip({ t, size = "sm" }) {
+  const pad = size === "sm" ? "2px 9px" : "3px 12px";
+  const fs = size === "sm" ? "10.5px" : "12px";
+  return (
+    <span style={{ background: TYPE_COLORS[t] + "22", color: TYPE_COLORS[t], border: `1px solid ${TYPE_COLORS[t]}55`,
+      padding: pad, fontSize: fs, borderRadius: 3, fontFamily: MONO, letterSpacing: "0.06em",
+      textTransform: "uppercase", fontWeight: 600, display: "inline-block", lineHeight: 1.5 }}>
+      {t}
+    </span>
+  );
+}
+function SegBar({ value, max, color = DATA, segments = 10, label }) {
+  const filled = Math.max(0, Math.min(segments, Math.round((value / max) * segments)));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {label && <span style={{ width: 30, fontSize: 10, color: DIM, fontFamily: MONO }}>{label}</span>}
+      <div style={{ display: "flex", gap: 2 }}>
+        {Array.from({ length: segments }).map((_, i) => (
+          <div key={i} style={{ width: 7, height: 12, borderRadius: 1, background: i < filled ? color : LINE, transition: "background 0.3s" }} />
+        ))}
+      </div>
+      <span style={{ fontSize: 11, color: DIM, fontFamily: MONO }}>{value}</span>
+    </div>
+  );
+}
+function Spinner({ text }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, color: DIM, padding: 20, fontSize: 13 }}>
+      <SpinIcon size={15} />{text || "Loading..."}
+    </div>
+  );
+}
+function ErrorBox({ msg }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: 14, background: "#3A201E", border: `1px solid ${SCAN}55`, borderRadius: 6, color: "#F0B8B0", fontSize: 12.5 }}>
+      <AlertIcon size={15} color="#F0B8B0" /><span>{msg}</span>
+    </div>
+  );
+}
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 11, color: DIM, fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8, borderBottom: `1px solid ${LINE}`, paddingBottom: 6 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+/* ---------------- Pokémon detail ---------------- */
+function PokemonDetail({ id, onClose, abilityCache, moveCache, setAbilityCache, setMoveCache }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [openAbility, setOpenAbility] = useState(null);
+  const [openMove, setOpenMove] = useState(null);
+  const [moveFilter, setMoveFilter] = useState("level-up");
+
+  useEffect(() => {
+    setData(null); setErr(null);
+    getJSON(`${API}/pokemon/${id}`).then(setData).catch((e) => setErr(e.message));
+  }, [id]);
+
+  const loadAbility = useCallback(async (name) => {
+    if (abilityCache[name]) { setOpenAbility(openAbility === name ? null : name); return; }
+    setOpenAbility(name);
+    try {
+      const d = await getJSON(`${API}/ability/${name}`);
+      const entry = d.effect_entries.find((e) => e.language.name === "en");
+      setAbilityCache((c) => ({ ...c, [name]: entry?.short_effect || entry?.effect || "No description available." }));
+    } catch { setAbilityCache((c) => ({ ...c, [name]: "Couldn't load description." })); }
+  }, [abilityCache, openAbility, setAbilityCache]);
+
+  const loadMove = useCallback(async (name) => {
+    if (moveCache[name]) { setOpenMove(openMove === name ? null : name); return; }
+    setOpenMove(name);
+    try {
+      const d = await getJSON(`${API}/move/${name}`);
+      const entry = d.effect_entries.find((e) => e.language.name === "en");
+      let text = entry?.short_effect || entry?.effect || "No additional effect.";
+      text = text.replace("$effect_chance%", `${d.effect_chance ?? ""}%`);
+      setMoveCache((c) => ({ ...c, [name]: { type: d.type.name, power: d.power, accuracy: d.accuracy, pp: d.pp, dmgClass: d.damage_class.name, text } }));
+    } catch { setMoveCache((c) => ({ ...c, [name]: { text: "Couldn't load move data." } })); }
+  }, [moveCache, openMove, setMoveCache]);
+
+  if (err) return <div style={{ padding: 16 }}><ErrorBox msg={`Couldn't load this Pokémon — ${err}`} /></div>;
+  if (!data) return <Spinner text="Scanning entry..." />;
+
+  const types = data.types.map((t) => t.type.name);
+  const movesByMethod = { "level-up": [], machine: [], egg: [], tutor: [] };
+  data.moves.forEach((m) => {
+    const detail = m.version_group_details[m.version_group_details.length - 1];
+    const method = detail?.move_learn_method?.name === "level-up" ? "level-up" : detail?.move_learn_method?.name;
+    if (movesByMethod[method]) movesByMethod[method].push({ name: m.move.name, level: detail.level_learned_at });
+  });
+  movesByMethod["level-up"].sort((a, b) => a.level - b.level);
+  const statMax = { hp: 255, attack: 190, defense: 230, "special-attack": 194, "special-defense": 230, speed: 180 };
+  const statLabel = { hp: "HP", attack: "ATK", defense: "DEF", "special-attack": "SPA", "special-defense": "SPD", speed: "SPE" };
+
+  return (
+    <div style={{ animation: "scanIn 0.35s ease" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontFamily: MONO, color: SCAN, fontSize: 12, letterSpacing: "0.08em" }}>№{String(data.id).padStart(4, "0")}</div>
+          <h2 style={{ margin: "2px 0 8px", fontSize: 22, color: CREAM, fontWeight: 700 }}>{prettyName(data.name)}</h2>
+          <div style={{ display: "flex", gap: 6 }}>{types.map((t) => <TypeChip key={t} t={t} size="md" />)}</div>
+        </div>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: DIM, cursor: "pointer", padding: 4 }}><XIcon size={20} /></button>
+      </div>
+
+      <div style={{ display: "flex", gap: 14, marginBottom: 18 }}>
+        <img src={spriteUrl(data.id)} alt={data.name} width={88} height={88} style={{ imageRendering: "pixelated", background: PANEL, borderRadius: 8, border: `1px solid ${LINE}` }} />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, justifyContent: "center" }}>
+          {data.stats.map((s) => <SegBar key={s.stat.name} value={s.base_stat} max={statMax[s.stat.name] || 200} color={DATA} label={statLabel[s.stat.name]} />)}
+        </div>
+      </div>
+
+      <Section title="Abilities">
+        {data.abilities.map((a) => (
+          <div key={a.ability.name} style={{ marginBottom: 6 }}>
+            <button onClick={() => loadAbility(a.ability.name)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: CREAM, cursor: "pointer", padding: "4px 0", fontSize: 13.5, width: "100%", textAlign: "left" }}>
+              {openAbility === a.ability.name ? <ChevronDownIcon size={14} color={DIM} /> : <ChevronRightIcon size={14} color={DIM} />}
+              <span style={{ fontWeight: 600 }}>{prettyName(a.ability.name)}</span>
+              {a.is_hidden && <span style={{ fontSize: 10, color: WARN, fontFamily: "monospace" }}>HIDDEN</span>}
+            </button>
+            {openAbility === a.ability.name && (
+              <div style={{ paddingLeft: 20, fontSize: 12.5, color: DIM, lineHeight: 1.5 }}>
+                {abilityCache[a.ability.name] || <Spinner text="" />}
+              </div>
+            )}
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Moves">
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+          {Object.keys(movesByMethod).map((m) => movesByMethod[m].length > 0 && (
+            <button key={m} onClick={() => setMoveFilter(m)} style={{
+              fontSize: 11, padding: "4px 10px", borderRadius: 4, cursor: "pointer", fontFamily: MONO,
+              textTransform: "uppercase", letterSpacing: "0.04em",
+              background: moveFilter === m ? SCAN + "33" : "transparent",
+              color: moveFilter === m ? SCAN : DIM, border: `1px solid ${moveFilter === m ? SCAN + "66" : LINE}`,
+            }}>{m.replace("-", " ")} ({movesByMethod[m].length})</button>
+          ))}
+        </div>
+        <div style={{ maxHeight: 280, overflowY: "auto" }}>
+          {movesByMethod[moveFilter].map((m) => (
+            <div key={m.name} style={{ borderBottom: `1px solid ${LINE}` }}>
+              <button onClick={() => loadMove(m.name)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", color: CREAM, cursor: "pointer", padding: "7px 0", textAlign: "left", fontSize: 13 }}>
+                {openMove === m.name ? <ChevronDownIcon size={13} color={DIM} /> : <ChevronRightIcon size={13} color={DIM} />}
+                {moveFilter === "level-up" && <span style={{ fontFamily: MONO, fontSize: 11, color: DATA, width: 24 }}>{m.level || "—"}</span>}
+                <span style={{ flex: 1 }}>{prettyName(m.name)}</span>
+              </button>
+              {openMove === m.name && (
+                <div style={{ paddingLeft: 20, paddingBottom: 8, fontSize: 12, color: DIM }}>
+                  {moveCache[m.name] ? (
+                    moveCache[m.name].type ? (
+                      <div>
+                        <div style={{ display: "flex", gap: 10, marginBottom: 4, alignItems: "center", flexWrap: "wrap" }}>
+                          <TypeChip t={moveCache[m.name].type} />
+                          <span style={{ fontFamily: MONO }}>PWR {moveCache[m.name].power ?? "—"}</span>
+                          <span style={{ fontFamily: MONO }}>ACC {moveCache[m.name].accuracy ?? "—"}</span>
+                          <span style={{ fontFamily: MONO }}>PP {moveCache[m.name].pp ?? "—"}</span>
+                          <span style={{ fontFamily: MONO, color: WARN }}>{moveCache[m.name].dmgClass?.toUpperCase()}</span>
+                        </div>
+                        <div style={{ lineHeight: 1.5 }}>{moveCache[m.name].text}</div>
+                      </div>
+                    ) : <div>{moveCache[m.name].text}</div>
+                  ) : <Spinner text="" />}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+/* ---------------- Pokédex tab ---------------- */
+function PokedexTab({ shared }) {
+  const [allList, setAllList] = useState([]);
+  const [err, setErr] = useState(null);
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState(null);
+  const [typeFilterResults, setTypeFilterResults] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(40);
+  const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => {
+    getJSON(`${API}/pokemon?limit=1302`)
+      .then((d) => setAllList(d.results.map((r, i) => ({ name: r.name, id: i + 1 }))))
+      .catch((e) => setErr(e.message));
+  }, []);
+
+  useEffect(() => {
+    if (!typeFilter) { setTypeFilterResults(null); return; }
+    getJSON(`${API}/type/${typeFilter}`)
+      .then((d) => setTypeFilterResults(new Set(d.pokemon.map((p) => p.pokemon.name))))
+      .catch(() => setTypeFilterResults(new Set()));
+  }, [typeFilter]);
+
+  const filtered = useMemo(() => {
+    let list = allList;
+    if (typeFilterResults) list = list.filter((p) => typeFilterResults.has(p.name));
+    if (query.trim()) list = list.filter((p) => p.name.includes(query.trim().toLowerCase()));
+    return list;
+  }, [allList, query, typeFilterResults]);
+
+  if (err) return <ErrorBox msg={`Couldn't reach the Pokémon data service — ${err}. Check your connection and try again.`} />;
+  if (selectedId) {
+    return <PokemonDetail id={selectedId} onClose={() => setSelectedId(null)} abilityCache={shared.abilityCache} moveCache={shared.moveCache} setAbilityCache={shared.setAbilityCache} setMoveCache={shared.setMoveCache} />;
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", background: PANEL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "8px 10px" }}>
+          <SearchIcon size={15} color={DIM} />
+          <input value={query} onChange={(e) => { setQuery(e.target.value); setVisibleCount(40); }} placeholder="Search by name..."
+            style={{ background: "none", border: "none", outline: "none", color: CREAM, marginLeft: 8, width: "100%", fontSize: 14 }} />
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        <button onClick={() => setTypeFilter(null)} style={{ fontSize: 10.5, padding: "3px 9px", borderRadius: 3, fontFamily: MONO, textTransform: "uppercase", cursor: "pointer", background: !typeFilter ? CREAM : "transparent", color: !typeFilter ? INK : DIM, border: `1px solid ${LINE}` }}>All</button>
+        {TYPE_LIST.map((t) => (
+          <button key={t} onClick={() => setTypeFilter(typeFilter === t ? null : t)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", opacity: typeFilter && typeFilter !== t ? 0.4 : 1 }}>
+            <TypeChip t={t} />
+          </button>
+        ))}
+      </div>
+
+      {allList.length === 0 && !err && <Spinner text="Loading national dex..." />}
+      <div style={{ color: DIM, fontSize: 11.5, marginBottom: 8, fontFamily: MONO }}>{filtered.length} entries</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {filtered.slice(0, visibleCount).map((p) => (
+          <button key={p.id} onClick={() => setSelectedId(p.name)} style={{ display: "flex", alignItems: "center", gap: 10, background: PANEL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer", color: CREAM, textAlign: "left" }}>
+            <img src={spriteUrl(p.id)} width={32} height={32} style={{ imageRendering: "pixelated" }} onError={(e) => (e.target.style.opacity = 0)} alt="" />
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: DIM, width: 40 }}>#{String(p.id).padStart(3, "0")}</span>
+            <span style={{ flex: 1, fontSize: 13.5 }}>{prettyName(p.name)}</span>
+            <ChevronRightIcon size={14} color={DIM} />
+          </button>
+        ))}
+      </div>
+      {visibleCount < filtered.length && (
+        <button onClick={() => setVisibleCount((v) => v + 40)} style={{ marginTop: 10, width: "100%", padding: "9px", background: "transparent", border: `1px dashed ${LINE}`, color: DIM, borderRadius: 6, cursor: "pointer", fontSize: 12.5 }}>Load 40 more...</button>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Type Coverage tab ---------------- */
+function CoverageTab() {
+  const [defTypes, setDefTypes] = useState([]);
+  const toggle = (t) => setDefTypes((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : (cur.length >= 2 ? [cur[1], t] : [...cur, t]));
+
+  const results = useMemo(() => {
+    if (defTypes.length === 0) return null;
+    const rows = TYPE_LIST.map((atk) => ({ atk, m: comboMultiplier(atk, defTypes) }));
+    return {
+      best: rows.filter((r) => r.m >= 2).sort((a, b) => b.m - a.m),
+      resisted: rows.filter((r) => r.m > 0 && r.m < 1).sort((a, b) => a.m - b.m),
+      immune: rows.filter((r) => r.m === 0),
+    };
+  }, [defTypes]);
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: CREAM, marginBottom: 4, fontWeight: 600 }}>Pick the type (or dual-type) you want to defeat</div>
+      <div style={{ fontSize: 12, color: DIM, marginBottom: 12 }}>Select up to two defending types — you'll get the attacking types that hit it hardest.</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
+        {TYPE_LIST.map((t) => (
+          <button key={t} onClick={() => toggle(t)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", opacity: defTypes.length && !defTypes.includes(t) ? 0.45 : 1, transform: defTypes.includes(t) ? "scale(1.08)" : "scale(1)", transition: "all 0.15s" }}>
+            <TypeChip t={t} size="md" />
+          </button>
+        ))}
+      </div>
+      {defTypes.length === 0 && <div style={{ color: DIM, fontSize: 12.5, padding: 16, textAlign: "center", border: `1px dashed ${LINE}`, borderRadius: 8 }}>No type selected yet.</div>}
+      {results && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <CoverageGroup title={`Super effective vs ${defTypes.map(prettyName).join(" / ")}`} rows={results.best} color={SCAN} />
+          <CoverageGroup title="Resisted (deals reduced damage)" rows={results.resisted} color={WARN} />
+          {results.immune.length > 0 && <CoverageGroup title="No effect" rows={results.immune} color={DIM} />}
+        </div>
+      )}
+    </div>
+  );
+}
+function CoverageGroup({ title, rows, color }) {
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: DIM, fontFamily: MONO, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>{title}</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {rows.map((r) => (
+          <div key={r.atk} style={{ display: "flex", alignItems: "center", gap: 5, background: PANEL, border: `1px solid ${LINE}`, borderRadius: 5, padding: "4px 8px" }}>
+            <TypeChip t={r.atk} /><span style={{ fontSize: 11, fontFamily: MONO, color }}>{r.m}×</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Team Builder tab (uses localStorage) ---------------- */
+const STORAGE_KEY = "pokedex-terminal-owned-roster";
+function TeamBuilderTab() {
+  const [allList, setAllList] = useState([]);
+  const [owned, setOwned] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
+  });
+  const [picker, setPicker] = useState(false);
+  const [query, setQuery] = useState("");
+  const [team, setTeam] = useState([]);
+  const [detailCache, setDetailCache] = useState({});
+  const [loadingTypes, setLoadingTypes] = useState(false);
+
+  useEffect(() => {
+    getJSON(`${API}/pokemon?limit=1302`).then((d) => setAllList(d.results.map((r, i) => ({ name: r.name, id: i + 1 })))).catch(() => {});
+  }, []);
+
+  const saveOwned = useCallback((list) => {
+    setOwned(list);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch {}
+  }, []);
+
+  const toggleOwned = (p) => {
+    const exists = owned.find((o) => o.id === p.id);
+    saveOwned(exists ? owned.filter((o) => o.id !== p.id) : [...owned, p]);
+  };
+  const toggleTeam = (p) => setTeam((cur) => cur.find((c) => c.id === p.id) ? cur.filter((c) => c.id !== p.id) : (cur.length >= 6 ? cur : [...cur, p]));
+
+  useEffect(() => {
+    const missing = team.filter((p) => !detailCache[p.id]);
+    if (missing.length === 0) return;
+    setLoadingTypes(true);
+    Promise.all(missing.map((p) => getJSON(`${API}/pokemon/${p.id}`).then((d) => ({ id: p.id, types: d.types.map((t) => t.type.name) })).catch(() => ({ id: p.id, types: [] }))))
+      .then((results) => { setDetailCache((c) => { const next = { ...c }; results.forEach((r) => (next[r.id] = r.types)); return next; }); setLoadingTypes(false); });
+  }, [team, detailCache]);
+
+  const analysis = useMemo(() => {
+    if (team.length === 0) return null;
+    const weakCount = {}, resistCount = {}, stab = new Set();
+    team.forEach((p) => {
+      const types = detailCache[p.id];
+      if (!types) return;
+      types.forEach((t) => stab.add(t));
+      TYPE_LIST.forEach((atk) => {
+        const m = comboMultiplier(atk, types);
+        if (m >= 2) weakCount[atk] = (weakCount[atk] || 0) + 1;
+        if (m < 1) resistCount[atk] = (resistCount[atk] || 0) + 1;
+      });
+    });
+    const sharedWeak = Object.entries(weakCount).filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]);
+    const uncovered = TYPE_LIST.filter((t) => ![...stab].some((s) => mult(s, t) >= 2));
+    return { sharedWeak, stab: [...stab], uncovered };
+  }, [team, detailCache]);
+
+  const filteredPicker = useMemo(() => {
+    if (!query.trim()) return allList.slice(0, 60);
+    return allList.filter((p) => p.name.includes(query.trim().toLowerCase())).slice(0, 60);
+  }, [allList, query]);
+
+  if (picker) {
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: CREAM }}>Choose Pokémon you own</div>
+          <button onClick={() => setPicker(false)} style={{ background: SCAN, color: "#fff", border: "none", borderRadius: 5, padding: "6px 12px", fontSize: 12, cursor: "pointer" }}>Done</button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", background: PANEL, border: `1px solid ${LINE}`, borderRadius: 6, padding: "8px 10px", marginBottom: 12 }}>
+          <SearchIcon size={15} color={DIM} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search to add..." style={{ background: "none", border: "none", outline: "none", color: CREAM, marginLeft: 8, width: "100%", fontSize: 14 }} />
+        </div>
+        <div style={{ fontSize: 11, color: DIM, marginBottom: 8, fontFamily: MONO }}>{owned.length} in your roster</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {filteredPicker.map((p) => {
+            const isOwned = owned.some((o) => o.id === p.id);
+            return (
+              <button key={p.id} onClick={() => toggleOwned(p)} style={{ display: "flex", alignItems: "center", gap: 10, background: isOwned ? DATA + "1A" : PANEL, border: `1px solid ${isOwned ? DATA + "55" : LINE}`, borderRadius: 6, padding: "7px 10px", cursor: "pointer", color: CREAM, textAlign: "left" }}>
+                <img src={spriteUrl(p.id)} width={28} height={28} style={{ imageRendering: "pixelated" }} onError={(e) => (e.target.style.opacity = 0)} alt="" />
+                <span style={{ flex: 1, fontSize: 13 }}>{prettyName(p.name)}</span>
+                {isOwned ? <CheckIcon size={15} color={DATA} /> : <span style={{ fontSize: 11, color: DIM }}>add</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: CREAM }}>Your roster</div>
+          <div style={{ fontSize: 11.5, color: DIM }}>{owned.length} Pokémon saved</div>
+        </div>
+        <button onClick={() => setPicker(true)} style={{ background: PANEL, border: `1px solid ${LINE}`, color: CREAM, borderRadius: 6, padding: "7px 12px", fontSize: 12, cursor: "pointer" }}>Manage roster</button>
+      </div>
+
+      {owned.length === 0 ? (
+        <div style={{ color: DIM, fontSize: 12.5, padding: 16, textAlign: "center", border: `1px dashed ${LINE}`, borderRadius: 8, marginBottom: 16 }}>No Pokémon added yet. Tap "Manage roster" to pick the ones you have.</div>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, color: DIM, fontFamily: MONO, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Tap up to 6 to build a team ({team.length}/6)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 18 }}>
+            {owned.map((p) => {
+              const inTeam = team.some((t) => t.id === p.id);
+              return (
+                <button key={p.id} onClick={() => toggleTeam(p)} style={{ display: "flex", alignItems: "center", gap: 8, background: inTeam ? SCAN + "1A" : PANEL, border: `1px solid ${inTeam ? SCAN + "66" : LINE}`, borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: CREAM, textAlign: "left" }}>
+                  <img src={spriteUrl(p.id)} width={26} height={26} style={{ imageRendering: "pixelated" }} onError={(e) => (e.target.style.opacity = 0)} alt="" />
+                  <span style={{ fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{prettyName(p.name)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {team.length > 0 && (
+        <Section title="Team analysis">
+          {loadingTypes && <Spinner text="Checking typings..." />}
+          {analysis && !loadingTypes && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Shared weak points (2+ teammates hit hard by this type)</div>
+                {analysis.sharedWeak.length === 0 ? (
+                  <div style={{ fontSize: 12, color: DATA }}>No major overlapping weaknesses found — nicely spread.</div>
+                ) : (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {analysis.sharedWeak.map(([t, c]) => (
+                      <div key={t} style={{ display: "flex", gap: 5, alignItems: "center", background: PANEL, border: `1px solid ${LINE}`, borderRadius: 5, padding: "4px 8px" }}>
+                        <TypeChip t={t} /><span style={{ fontSize: 11, color: WARN, fontFamily: MONO }}>×{c}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Offensive types your team has (STAB)</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{analysis.stab.map((t) => <TypeChip key={t} t={t} />)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11.5, color: DIM, marginBottom: 6 }}>Types your team can't hit super-effectively</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {analysis.uncovered.length === 0 ? <span style={{ fontSize: 12, color: DATA }}>Full coverage — every type has an answer.</span> : analysis.uncovered.map((t) => <TypeChip key={t} t={t} />)}
+                </div>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- App shell ---------------- */
+function App() {
+  const [tab, setTab] = useState("dex");
+  const [abilityCache, setAbilityCache] = useState({});
+  const [moveCache, setMoveCache] = useState({});
+  const tabs = [
+    { id: "dex", label: "Pokédex", Icon: BookIcon },
+    { id: "coverage", label: "Type coverage", Icon: SwordsIcon },
+    { id: "team", label: "Team builder", Icon: UsersIcon },
+  ];
+  return (
+    <div style={{ background: INK, minHeight: "100vh", fontFamily: "Inter, system-ui, sans-serif", color: CREAM }}>
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "18px 16px 60px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 14, height: 14, borderRadius: "50%", background: SCAN, boxShadow: `0 0 10px ${SCAN}` }} />
+          <div style={{ fontFamily: MONO, fontSize: 14, letterSpacing: "0.12em", fontWeight: 700 }}>POKÉDEX TERMINAL</div>
+        </div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 18, background: PANEL, borderRadius: 8, padding: 4, border: `1px solid ${LINE}` }}>
+          {tabs.map((t) => {
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px",
+                borderRadius: 6, border: "none", cursor: "pointer", background: active ? INK : "transparent",
+                color: active ? SCAN : DIM, fontSize: 10.5, fontFamily: MONO, letterSpacing: "0.02em",
+              }}>
+                <t.Icon size={16} />{t.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ background: PANEL, border: `1px solid ${LINE}`, borderRadius: 10, padding: 16, minHeight: 300 }}>
+          {tab === "dex" && <PokedexTab shared={{ abilityCache, moveCache, setAbilityCache, setMoveCache }} />}
+          {tab === "coverage" && <CoverageTab />}
+          {tab === "team" && <TeamBuilderTab />}
+        </div>
+        <div style={{ textAlign: "center", fontSize: 10.5, color: DIM, marginTop: 14, fontFamily: MONO }}>Live data via PokéAPI · roster saved in this browser</div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
