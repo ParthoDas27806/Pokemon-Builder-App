@@ -10,8 +10,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
-  // ===== STEP 1 of cloud-sync setup: paste your Firebase project's config below =====
-  // Leave apiKey as "YOUR_API_KEY" to keep using local-device-only storage.
   const FIREBASE_CONFIG = {
     apiKey: "YOUR_API_KEY",
     authDomain: "YOUR_PROJECT.firebaseapp.com",
@@ -451,7 +449,120 @@ function suggestChampionsItems(name, types) {
   return opts.slice(0, 4);
 }
 
-// ---- Moveset suggestion helpers (used by Team Builder) ----
+/* ---- Champions stat training recommendations (heuristic, no API key needed) ---- */
+const STAT_FULL = {
+  hp: "HP",
+  attack: "Attack",
+  defense: "Defense",
+  "special-attack": "Sp. Atk",
+  "special-defense": "Sp. Def",
+  speed: "Speed"
+};
+function suggestTraining(roles, stats) {
+  const atk = stats.attack || 0,
+    spa = stats["special-attack"] || 0;
+  const def = stats.defense || 0,
+    spd = stats["special-defense"] || 0;
+  const spe = stats.speed || 0,
+    hp = stats.hp || 0;
+  const primaryRole = roles[0] || "All-Rounder";
+  const isPhys = atk >= spa;
+  const offStat = isPhys ? "attack" : "special-attack";
+  const offLabel = isPhys ? "Attack" : "Sp. Atk";
+  const presets = {
+    "Physical Sweeper": {
+      primary: "attack",
+      secondary: "speed",
+      avoid: "special-attack",
+      focus: "Max Attack and Speed — you want to hit first and hit hardest.",
+      nature: "Jolly or Adamant"
+    },
+    "Special Sweeper": {
+      primary: "special-attack",
+      secondary: "speed",
+      avoid: "attack",
+      focus: "Max Sp. Atk and Speed — outrun and nuke.",
+      nature: "Timid or Modest"
+    },
+    "Wallbreaker": {
+      primary: offStat,
+      secondary: "hp",
+      avoid: isPhys ? "special-attack" : "attack",
+      focus: `Max ${offLabel}, then HP for just enough bulk to take a hit and fire back.`,
+      nature: isPhys ? "Adamant" : "Modest"
+    },
+    "Setup Sweeper": {
+      primary: offStat,
+      secondary: "speed",
+      avoid: isPhys ? "special-attack" : "attack",
+      focus: `Max ${offLabel} so each stat raise hits harder. Speed next.`,
+      nature: isPhys ? "Jolly" : "Timid"
+    },
+    "Trick Room Abuser": {
+      primary: offStat,
+      secondary: "hp",
+      avoid: "speed",
+      focus: `Max ${offLabel} — and critically, DO NOT invest in Speed. You want to be as slow as possible so you go first under Trick Room.`,
+      nature: isPhys ? "Brave" : "Quiet"
+    },
+    "Physical Wall": {
+      primary: "hp",
+      secondary: "defense",
+      avoid: "special-attack",
+      focus: "HP first so your Defence investment scales harder — then max Defence.",
+      nature: "Bold or Impish"
+    },
+    "Special Wall": {
+      primary: "hp",
+      secondary: "special-defense",
+      avoid: "attack",
+      focus: "HP first, then Sp. Def — same principle as physical walling.",
+      nature: "Calm or Careful"
+    },
+    "Mixed Wall": {
+      primary: "hp",
+      secondary: def >= spd ? "defense" : "special-defense",
+      avoid: "speed",
+      focus: "HP first. Then shore up whichever defence is lower so nothing punches through you.",
+      nature: "Bold, Calm, or Relaxed"
+    },
+    "Speed Control / Lead": {
+      primary: "speed",
+      secondary: "hp",
+      avoid: isPhys ? "special-attack" : "attack",
+      focus: "Max Speed so you always go first to set Tailwind/TR. HP second for durability.",
+      nature: "Jolly, Timid, or Jolly"
+    },
+    "Pivot": {
+      primary: "speed",
+      secondary: isPhys ? "defense" : "special-defense",
+      avoid: isPhys ? "special-attack" : "attack",
+      focus: "Speed to switch at the right time. Bulk to survive the hit you take coming in.",
+      nature: isPhys ? "Impish" : "Calm"
+    },
+    "Support": {
+      primary: "hp",
+      secondary: spd >= def ? "special-defense" : "defense",
+      avoid: isPhys ? "special-attack" : "attack",
+      focus: "Pure bulk — you're not here to deal damage. Max HP then your better defence.",
+      nature: "Bold or Calm"
+    },
+    "All-Rounder": {
+      primary: offStat,
+      secondary: "speed",
+      avoid: null,
+      focus: `Balanced — lean ${offLabel} and Speed unless you have a specific strategy in mind.`,
+      nature: "Jolly or Timid"
+    }
+  };
+  const rec = presets[primaryRole] || presets["All-Rounder"];
+  return {
+    ...rec,
+    primaryLabel: STAT_FULL[rec.primary],
+    secondaryLabel: STAT_FULL[rec.secondary],
+    avoidLabel: rec.avoid ? STAT_FULL[rec.avoid] : null
+  };
+}
 const STATUS_KEYWORDS = ["protect", "recover", "roost", "swords-dance", "calm-mind", "toxic", "will-o-wisp", "stealth-rock", "substitute", "nasty-plot", "iron-defense", "agility", "taunt", "thunder-wave", "spore", "sleep-powder", "synthesis", "moonlight", "morning-sun", "rest", "curse", "bulk-up", "dragon-dance"];
 function collectCandidateMoveNames(full) {
   const seen = new Set();
@@ -545,53 +656,190 @@ function parseRosterText(text, allList) {
   };
 }
 
-// Score a candidate team: reward type coverage + offensive diversity, penalise shared weaknesses.
-function scoreTeam(members, detailCache) {
-  const stab = new Set();
-  const weakCount = {};
-  members.forEach(p => {
-    const types = detailCache[p.id] || [];
-    types.forEach(t => stab.add(t));
-    TYPE_LIST.forEach(atk => {
-      const m = comboMultiplier(atk, types);
-      if (m >= 2) weakCount[atk] = (weakCount[atk] || 0) + 1;
-    });
-  });
-  const uncovered = TYPE_LIST.filter(t => ![...stab].some(s => mult(s, t) >= 2)).length;
-  const coverage = TYPE_LIST.length - uncovered;
-  const sharedWeakPenalty = Object.values(weakCount).reduce((s, c) => s + Math.max(0, c - 1), 0);
-  return coverage * 3 - sharedWeakPenalty * 2 + stab.size;
+/* ============================================================
+   COMPETITIVE TEAM ENGINE
+   ============================================================ */
+
+// Stat thresholds for role detection (base stats)
+function detectRoles(stats, types) {
+  const {
+    hp = 0,
+    attack = 0,
+    defense = 0,
+    "special-attack": spa = 0,
+    "special-defense": spd = 0,
+    speed = 0
+  } = stats;
+  const bst = hp + attack + defense + spa + spd + speed;
+  const roles = [];
+
+  // Sweepers need power + speed
+  if (attack >= 100 && speed >= 80) roles.push("Physical Sweeper");
+  if (spa >= 100 && speed >= 80) roles.push("Special Sweeper");
+  // Setup sweeper (high attack/spa but medium speed - wants to set up first)
+  if ((attack >= 100 || spa >= 100) && speed < 80 && speed > 55) roles.push("Setup Sweeper");
+  // Trick Room abusers
+  if ((attack >= 100 || spa >= 100) && speed <= 55) roles.push("Trick Room Abuser");
+  // Walls/Tanks
+  if (defense >= 100 && hp >= 80) roles.push("Physical Wall");
+  if (spd >= 100 && hp >= 80) roles.push("Special Wall");
+  if (defense >= 80 && spd >= 80 && hp >= 90) roles.push("Mixed Wall");
+  // Pivots: decent bulk + speed, used to bring in teammates safely
+  if (speed >= 70 && (defense >= 70 || spd >= 70) && bst >= 480) roles.push("Pivot");
+  // Fast utility: high speed, not necessarily high offense
+  if (speed >= 105) roles.push("Speed Control / Lead");
+  // Bulky support: can't sweep, decent bulk
+  if ((defense >= 85 || spd >= 85) && attack < 90 && spa < 90) roles.push("Support");
+  // Wallbreaker: huge offense, doesn't care about speed
+  if ((attack >= 120 || spa >= 120) && speed < 90) roles.push("Wallbreaker");
+  return roles.length ? roles.slice(0, 2) : ["All-Rounder"];
 }
 
-// Greedily build the strongest 6-Pokémon team from a pool, given their cached types.
-function autoBuildTeam(pool, detailCache, maxSize = 6) {
-  const candidates = pool.filter(p => detailCache[p.id]);
-  const team = [];
-  const notes = [];
-  for (let i = 0; i < maxSize && team.length < candidates.length; i++) {
+// Assess each Pokémon in the pool individually before building the team
+function analyzePool(pool, fullDataMap) {
+  return pool.map(p => {
+    const full = fullDataMap[p.id];
+    if (!full) return {
+      ...p,
+      roles: ["Unknown"],
+      stats: {},
+      bst: 0
+    };
+    const stats = {};
+    full.stats.forEach(s => stats[s.stat.name] = s.base_stat);
+    const bst = Object.values(stats).reduce((a, b) => a + b, 0);
+    const types = full.types.map(t => t.type.name);
+    const roles = detectRoles(stats, types);
+    return {
+      ...p,
+      roles,
+      stats,
+      bst,
+      types
+    };
+  }).sort((a, b) => b.bst - a.bst);
+}
+const ROLE_PRIORITY = ["Speed Control / Lead", "Physical Wall", "Special Wall", "Mixed Wall", "Wallbreaker", "Physical Sweeper", "Special Sweeper", "Setup Sweeper", "Pivot", "Support", "Trick Room Abuser", "All-Rounder"];
+const ROLE_COLORS = {
+  "Physical Sweeper": "#E5483D",
+  "Special Sweeper": "#9B4F9E",
+  "Setup Sweeper": "#E8C53A",
+  "Wallbreaker": "#E5602C",
+  "Trick Room Abuser": "#6E5A99",
+  "Physical Wall": "#3E8FD0",
+  "Special Wall": "#5FD9C4",
+  "Mixed Wall": "#6FCFCB",
+  "Pivot": "#5FAE4A",
+  "Speed Control / Lead": "#C2A24A",
+  "Support": "#8FA6E0",
+  "All-Rounder": "#A4A290"
+};
+
+// Competitive team builder: role-first, then defensive synergy
+function buildCompetitiveTeam(analyzedPool, maxSize = 6) {
+  const DESIRED_ROLES = ["Speed Control / Lead", ["Physical Sweeper", "Special Sweeper", "Wallbreaker", "Setup Sweeper"], ["Physical Sweeper", "Special Sweeper", "Wallbreaker", "Setup Sweeper"], ["Physical Wall", "Special Wall", "Mixed Wall", "Support"], "Pivot", ["Trick Room Abuser", "All-Rounder", "Setup Sweeper"]];
+  const selected = [];
+  const usedIds = new Set();
+  for (const roleSlot of DESIRED_ROLES) {
+    if (selected.length >= maxSize) break;
+    const wanted = Array.isArray(roleSlot) ? roleSlot : [roleSlot];
     let best = null,
       bestScore = -Infinity;
-    candidates.forEach(c => {
-      if (team.some(t => t.id === c.id)) return;
-      const score = scoreTeam([...team, c], detailCache);
+    for (const candidate of analyzedPool) {
+      if (usedIds.has(candidate.id)) continue;
+      const fillsRole = candidate.roles.some(r => wanted.includes(r));
+      if (!fillsRole) continue;
+
+      // Score: prefer higher BST, penalise type overlap with selected
+      const typeOverlap = (candidate.types || []).filter(t => selected.some(s => (s.types || []).includes(t))).length;
+      const weaknessOverlap = getSharedWeaknesses(candidate, selected);
+      const score = candidate.bst - typeOverlap * 30 - weaknessOverlap * 40;
       if (score > bestScore) {
         bestScore = score;
-        best = c;
+        best = candidate;
       }
-    });
-    if (!best) break;
-    const beforeStab = new Set(team.flatMap(p => detailCache[p.id] || []));
-    const newTypes = (detailCache[best.id] || []).filter(t => !beforeStab.has(t));
-    notes.push({
-      id: best.id,
-      newTypes
-    });
-    team.push(best);
+    }
+
+    // Fallback: pick best unselected Pokémon that adds something
+    if (!best) {
+      for (const candidate of analyzedPool) {
+        if (usedIds.has(candidate.id)) continue;
+        const typeOverlap = (candidate.types || []).filter(t => selected.some(s => (s.types || []).includes(t))).length;
+        const score = candidate.bst - typeOverlap * 20;
+        if (score > bestScore) {
+          bestScore = score;
+          best = candidate;
+        }
+      }
+    }
+    if (best) {
+      selected.push(best);
+      usedIds.add(best.id);
+    }
   }
-  return {
-    team,
-    notes
+  return selected;
+}
+function getSharedWeaknesses(candidate, others) {
+  const cTypes = candidate.types || [];
+  return TYPE_LIST.filter(atk => {
+    const mC = comboMultiplier(atk, cTypes);
+    return mC >= 2 && others.some(o => comboMultiplier(atk, o.types || []) >= 2);
+  }).length;
+}
+
+// Determine overall team archetype based on roles
+function detectArchetype(team) {
+  const roles = team.flatMap(p => p.roles || []);
+  const hasTR = roles.includes("Trick Room Abuser");
+  const sweepers = roles.filter(r => r.includes("Sweeper") || r === "Wallbreaker").length;
+  const walls = roles.filter(r => r.includes("Wall") || r === "Support").length;
+  const avgSpeed = team.reduce((s, p) => s + (p.stats?.speed || 60), 0) / team.length;
+  if (hasTR && avgSpeed < 70) return {
+    name: "Trick Room",
+    color: "#6E5A99",
+    desc: "Slow Pokémon go first — flip the speed tier table on your opponent."
   };
+  if (sweepers >= 4) return {
+    name: "Hyper Offense",
+    color: SCAN,
+    desc: "Maximum offensive pressure — overwhelm before the opponent sets up."
+  };
+  if (walls >= 3) return {
+    name: "Stall / Fat Balance",
+    color: "#3E8FD0",
+    desc: "Grind the opponent down with bulk, passive damage, and status."
+  };
+  if (sweepers >= 2 && walls >= 1) return {
+    name: "Bulky Offense",
+    color: DATA,
+    desc: "Strong attackers backed by defensive anchors — the classic balance."
+  };
+  return {
+    name: "Balance",
+    color: WARN,
+    desc: "Versatile team — adapts to different matchups."
+  };
+}
+
+// Role badge UI
+function RoleBadge({
+  role
+}) {
+  const color = ROLE_COLORS[role] || DIM;
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      padding: "2px 7px",
+      borderRadius: 3,
+      background: color + "22",
+      color,
+      border: `1px solid ${color}55`,
+      fontFamily: MONO,
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
+      flexShrink: 0
+    }
+  }, role);
 }
 const API = "https://pokeapi.co/api/v2";
 async function getJSON(url) {
@@ -1593,7 +1841,1001 @@ function CoverageGroup({
 
 /* ---------------- Team Builder tab (uses localStorage) ---------------- */
 const STORAGE_KEY = "pokedex-terminal-owned-roster";
-/* ---------------- Account panel (Firebase email/password login for cross-device roster sync) ---------------- */
+const STAT_COLORS = {
+  HP: "#E5483D",
+  Attack: "#E5602C",
+  Defense: "#3E8FD0",
+  "Sp. Atk": "#9B4F9E",
+  "Sp. Def": "#5FD9C4",
+  Speed: "#E8C53A"
+};
+function StatPill({
+  label,
+  highlight
+}) {
+  const color = highlight ? STAT_COLORS[label] || DATA : LINE;
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10.5,
+      padding: "2px 8px",
+      borderRadius: 3,
+      background: highlight ? color + "22" : "transparent",
+      color: highlight ? color : DIM,
+      border: `1px solid ${highlight ? color + "55" : LINE}`,
+      fontFamily: MONO
+    }
+  }, label);
+}
+function GuideBlock({
+  label,
+  content,
+  color = DATA
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.07em",
+      marginBottom: 4
+    }
+  }, label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: CREAM,
+      lineHeight: 1.6
+    }
+  }, content));
+}
+
+/* ============================================================
+   STAT TRAINING ENGINE (Pokémon Champions)
+   Champions lets you boost stats via Training — think of it
+   as EVs. Max two stats fully; split remainder into HP/bulk.
+   ============================================================ */
+function getHeuristicSpread(roles, stats) {
+  const primary = roles[0] || "All-Rounder";
+  const atk = stats.attack || 0,
+    spa = stats["special-attack"] || 0;
+  const isPhys = atk >= spa;
+  const offStat = isPhys ? "attack" : "special-attack";
+  const SPREADS = {
+    "Physical Sweeper": {
+      p: "attack",
+      s: "speed",
+      avoid: "sp. def / def",
+      tag: "252 Atk / 252 Spe / 4 HP",
+      note: "Max damage + max speed. Every speed point can be the difference between going first or getting knocked out."
+    },
+    "Special Sweeper": {
+      p: "special-attack",
+      s: "speed",
+      avoid: "attack / def",
+      tag: "252 SpA / 252 Spe / 4 HP",
+      note: "Pure speed + power. Anything else is wasted on a glass cannon."
+    },
+    "Setup Sweeper": {
+      p: offStat,
+      s: "hp",
+      avoid: "defensive stats beyond hp",
+      tag: `252 ${isPhys ? "Atk" : "SpA"} / 128 HP / 128 Spe`,
+      note: "Enough bulk to survive a hit and get your setup move off, then sweep."
+    },
+    "Wallbreaker": {
+      p: offStat,
+      s: "hp",
+      avoid: "speed if base < 70",
+      tag: `252 ${isPhys ? "Atk" : "SpA"} / 252 HP / 4 Spe`,
+      note: "You don't need to outspeed — you need to hit hard enough to punch through walls. HP keeps you alive to do it twice."
+    },
+    "Physical Wall": {
+      p: "hp",
+      s: "defense",
+      avoid: "attack / sp. atk",
+      tag: "252 HP / 252 Def / 4 SpD",
+      note: "HP training benefits both defenses. Max HP first, then max Defense for physical hits."
+    },
+    "Special Wall": {
+      p: "hp",
+      s: "special-defense",
+      avoid: "attack / sp. atk",
+      tag: "252 HP / 252 SpD / 4 Def",
+      note: "Same principle — HP first, then Special Defense. You want to wall special attackers forever."
+    },
+    "Mixed Wall": {
+      p: "hp",
+      s: "defense",
+      avoid: "both offensive stats",
+      tag: "252 HP / 128 Def / 128 SpD",
+      note: "Split your defensive training evenly. You're checking both attacker types — don't neglect either side."
+    },
+    "Pivot": {
+      p: "hp",
+      s: "speed",
+      avoid: "offensive stats (you're not the damage dealer)",
+      tag: "252 HP / 128 Spe / 128 Def",
+      note: "Bulk to absorb switch-in hits. Enough speed to pivot out before getting hit again."
+    },
+    "Speed Control / Lead": {
+      p: "speed",
+      s: offStat,
+      avoid: "bulk stats (you set up and get out)",
+      tag: `252 Spe / 252 ${isPhys ? "Atk" : "SpA"} / 4 HP`,
+      note: "Speed is your entire job on turn 1. Must be fastest on the field. Then hit hard as a bonus."
+    },
+    "Support": {
+      p: "hp",
+      s: "special-defense",
+      avoid: "both offensive stats",
+      tag: "252 HP / 252 SpD / 4 Def",
+      note: "You need to survive long enough to keep supporting. HP and SpD are your most important training."
+    },
+    "Trick Room Abuser": {
+      p: offStat,
+      s: "hp",
+      avoid: "SPEED — do NOT train speed",
+      tag: `252 ${isPhys ? "Atk" : "SpA"} / 252 HP / 4 Def`,
+      note: "Under Trick Room, slower = goes first. Do NOT invest in Speed. Maximise your damage output instead."
+    },
+    "All-Rounder": {
+      p: offStat,
+      s: "speed",
+      avoid: "nothing specific — be flexible",
+      tag: `252 ${isPhys ? "Atk" : "SpA"} / 128 Spe / 128 HP`,
+      note: "Balanced spread. Max your main attacking stat, then split between speed and bulk based on your role."
+    }
+  };
+  return SPREADS[primary] || SPREADS["All-Rounder"];
+}
+function HeuristicSpreadCard({
+  pokemon
+}) {
+  const spread = getHeuristicSpread(pokemon.roles || [], pokemon.stats || {});
+  const atk = (pokemon.stats || {}).attack || 0;
+  const spa = (pokemon.stats || {})["special-attack"] || 0;
+  const isPhys = atk >= spa;
+  const statOrder = ["hp", "attack", "defense", "special-attack", "special-defense", "speed"];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: `1px solid ${LINE}`,
+      borderRadius: 8,
+      padding: "10px 12px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("img", {
+    src: spriteUrl(pokemon.id),
+    width: 24,
+    height: 24,
+    style: {
+      imageRendering: "pixelated"
+    },
+    onError: e => e.target.style.opacity = 0,
+    alt: ""
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: CREAM
+    }
+  }, prettyName(pokemon.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      flexWrap: "wrap",
+      marginTop: 1
+    }
+  }, (pokemon.roles || []).map(r => /*#__PURE__*/React.createElement(RoleBadge, {
+    key: r,
+    role: r
+  }))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: MONO,
+      fontSize: 11,
+      color: DATA,
+      marginBottom: 6,
+      letterSpacing: "0.04em"
+    }
+  }, spread.tag), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 3,
+      marginBottom: 8
+    }
+  }, statOrder.map(stat => {
+    const base = (pokemon.stats || {})[stat] || 0;
+    const isPrimary = spread.p === stat;
+    const isSecondary = spread.s === stat;
+    const boost = isPrimary ? "MAX ★" : isSecondary ? "MAX" : "";
+    const barColor = isPrimary ? SCAN : isSecondary ? DATA : LINE;
+    const filled = Math.round(base / 255 * 10);
+    return /*#__PURE__*/React.createElement("div", {
+      key: stat,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 54,
+        fontSize: 9.5,
+        color: isPrimary ? CREAM : isSecondary ? DATA : DIM,
+        fontFamily: MONO,
+        textAlign: "right",
+        flexShrink: 0
+      }
+    }, STAT_LABELS[stat]), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 1.5
+      }
+    }, Array.from({
+      length: 10
+    }).map((_, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        width: 6,
+        height: 10,
+        borderRadius: 1,
+        background: i < filled ? barColor : INK,
+        border: `1px solid ${LINE}`
+      }
+    }))), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9.5,
+        color: isPrimary ? SCAN : isSecondary ? DATA : DIM,
+        fontFamily: MONO,
+        flexShrink: 0
+      }
+    }, base, boost ? ` — ${boost}` : ""));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginBottom: 6,
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10.5,
+      padding: "2px 7px",
+      background: SCAN + "1A",
+      border: `1px solid ${SCAN}44`,
+      borderRadius: 4,
+      color: SCAN
+    }
+  }, "Train ", STAT_LABELS[spread.p], " first"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10.5,
+      padding: "2px 7px",
+      background: DATA + "1A",
+      border: `1px solid ${DATA}44`,
+      borderRadius: 4,
+      color: DATA
+    }
+  }, "Then ", STAT_LABELS[spread.s]), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10.5,
+      padding: "2px 7px",
+      background: WARN + "1A",
+      border: `1px solid ${WARN}44`,
+      borderRadius: 4,
+      color: WARN
+    }
+  }, "Skip: ", spread.avoid)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, spread.note));
+}
+
+/* ============================================================
+   BATTLE GUIDE ENGINE
+   ============================================================ */
+function getHeuristicBattleGuide(team, archetype) {
+  const roles = team.map(p => ({
+    name: prettyName(p.name),
+    role: (p.roles || [])[0] || "All-Rounder"
+  }));
+  const lead = roles.find(r => r.role.includes("Speed Control") || r.role.includes("Lead") || r.role.includes("Support")) || roles[0];
+  const sweepers = roles.filter(r => r.role.includes("Sweeper") || r.role === "Wallbreaker");
+  const walls = roles.filter(r => r.role.includes("Wall"));
+  const pivot = roles.find(r => r.role === "Pivot");
+  const trAbuser = roles.find(r => r.role === "Trick Room Abuser");
+  const isTR = archetype.name === "Trick Room";
+  return {
+    teamSheet: roles,
+    leadChoice: isTR ? `Lead with your slowest or bulkiest Pokémon that can set Trick Room. ${lead.name} is your preferred opener — get TR up immediately.` : `Lead with ${lead.name}. ${lead.role === "Speed Control / Lead" ? "Your goal turn 1 is speed control — get Tailwind or hazards up before they react." : "Scout the opponent's lead and apply immediate pressure or pivot safely."}`,
+    openingTurns: isTR ? `Turn 1: Set Trick Room. Turn 2: If TR is up, bring in ${trAbuser?.name || sweepers[0]?.name || "your abuser"} and start dealing damage. If TR was blocked/failed, pivot to your fastest option and play normally.` : `Turn 1: ${lead.role.includes("Speed Control") ? `Use your speed control move with ${lead.name}` : `Attack or use setup with ${lead.name}`}. Turn 2-3: Identify their game plan — are they setting up, stalling, or going fast? Adjust your second Pokémon choice based on what you see.`,
+    setupWindows: sweepers.length > 0 ? `Get ${sweepers[0].name} in when: (1) the opponent just KO'd something giving you a free switch, (2) the opponent uses a status or recovery move, or (3) your lead has forced a switch. Never set up into a faster threat or a coverage move. ${sweepers.length > 1 ? `${sweepers[1].name} is your backup sweeper if ${sweepers[0].name} gets stopped early.` : ""}` : "Your team doesn't have a classic setup sweeper — apply constant offensive pressure and don't let the opponent breathe.",
+    midGame: walls.length > 0 ? `${walls[0].name} is your backbone mid-game. Switch into attacks that your sweepers can't take, then pivot back to an attacker. ${pivot ? `${pivot.name} is your momentum tool — use it to bring in the right Pokémon for free.` : "Don't let your walls die early — preserve them for emergency pivots."}` : `No dedicated walls — keep pressure up. ${pivot ? `Use ${pivot.name} as your pivot to safely bring in attackers.` : "Play aggressively and force the opponent into bad positions."}`,
+    winConditionExecution: `${sweepers.length > 0 ? `Once ${sweepers[0].name} gets a free turn to attack (or after setup), it should be able to clean up. Ideally, ${walls.length > 0 ? "have your walls remove threats or force switches first" : "remove the opponent's fastest check first"}. Then bring ${sweepers[0].name} in on something it beats.` : `Your win condition is grinding down the opponent with steady offense. Keep type advantages and don't let them set up.`}`,
+    endGame: `Late game (2-3 Pokémon each): (1) Identify what threatens your win condition and remove it first. (2) Don't sacrifice your ${sweepers[0]?.name || "best attacker"} just to deal minor damage — save it for the clean-up. (3) If you're behind, switch to your safest answer rather than gambling on a KO. (4) ${isTR ? "Reset Trick Room if the first one expires and you still need it." : "Preserve your fastest Pokémon — speed is a resource."}`,
+    keyMatchups: [{
+      situation: "vs. Hyper Offense",
+      response: `${walls.length > 0 ? `Tank hits with ${walls[0].name} and let them waste powerful moves` : "Match aggression — go for KOs before they do"}. ${sweepers.length > 0 ? `Then bring ${sweepers[0].name} in when weakened.` : ""}`
+    }, {
+      situation: "vs. Stall/Defense",
+      response: `Don't attack into high-defense Pokémon unless you have a super-effective move. ${sweepers.length > 0 ? `Use ${sweepers[0].name} to set up — stall teams struggle with boosted sweepers.` : "Apply passive damage and force switches to wear them down."}`
+    }, {
+      situation: "vs. Trick Room",
+      response: isTR ? "TR mirror — whoever sets it up second wins. Try to break their TR setter early." : `This is your hardest matchup. Use your ${walls.length > 0 ? `${walls[0].name} to tank hits under their TR` : "fastest Pokémon to put pressure on before TR goes up"}. Faster Priority moves ignore TR — use them if you have them.`
+    }],
+    commonMistakes: [`Setting up with ${sweepers[0]?.name || "your sweeper"} too early when the opponent still has a check alive — scout first.`, `${walls.length > 0 ? `Letting ${walls[0].name} die by keeping it in against super-effective coverage — switch out before that.` : "Staying in a losing matchup hoping for a crit or miss — take the switch."}`, `Forgetting to account for the opponent's priority moves late game when your ${sweepers[0]?.name || "attacker"} is below 50% HP.`]
+  };
+}
+function HeuristicBattleGuide({
+  team,
+  archetype
+}) {
+  const guide = getHeuristicBattleGuide(team, archetype);
+  const [open, setOpen] = useState(null);
+  const sections = [{
+    id: "lead",
+    label: "🎯 Lead choice",
+    content: guide.leadChoice
+  }, {
+    id: "opening",
+    label: "⚡ Opening turns (1-3)",
+    content: guide.openingTurns
+  }, {
+    id: "setup",
+    label: "📈 Setup windows",
+    content: guide.setupWindows
+  }, {
+    id: "mid",
+    label: "🔄 Mid-game pivoting",
+    content: guide.midGame
+  }, {
+    id: "win",
+    label: "🏆 Win condition execution",
+    content: guide.winConditionExecution
+  }, {
+    id: "end",
+    label: "🎲 End-game reads",
+    content: guide.endGame
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 6
+    }
+  }, sections.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.id,
+    style: {
+      border: `1px solid ${LINE}`,
+      borderRadius: 7,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setOpen(open === s.id ? null : s.id),
+    style: {
+      width: "100%",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      padding: "9px 12px",
+      background: open === s.id ? DATA + "15" : PANEL,
+      border: "none",
+      color: CREAM,
+      cursor: "pointer",
+      fontSize: 12.5,
+      fontWeight: 600,
+      textAlign: "left"
+    }
+  }, s.label, open === s.id ? /*#__PURE__*/React.createElement(ChevronDownIcon, {
+    size: 14,
+    color: DIM
+  }) : /*#__PURE__*/React.createElement(ChevronRightIcon, {
+    size: 14,
+    color: DIM
+  })), open === s.id && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "10px 12px",
+      fontSize: 12.5,
+      color: DIM,
+      lineHeight: 1.6,
+      borderTop: `1px solid ${LINE}`
+    }
+  }, s.content))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em",
+      marginBottom: 6
+    }
+  }, "Key matchups"), guide.keyMatchups.map(m => /*#__PURE__*/React.createElement("div", {
+    key: m.situation,
+    style: {
+      padding: "8px 10px",
+      border: `1px solid ${LINE}`,
+      borderRadius: 6,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      fontWeight: 600,
+      color: WARN,
+      marginBottom: 3
+    }
+  }, m.situation), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, m.response)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em",
+      marginBottom: 6
+    }
+  }, "Common mistakes to avoid"), guide.commonMistakes.map((m, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: "flex",
+      gap: 8,
+      alignItems: "flex-start",
+      fontSize: 12,
+      color: DIM,
+      marginBottom: 5,
+      lineHeight: 1.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: SCAN,
+      fontWeight: 700,
+      flexShrink: 0
+    }
+  }, "✕"), m))));
+}
+function AiAnalysisCard({
+  result,
+  team,
+  onReset
+}) {
+  const [section, setSection] = useState("team");
+  const ratingColor = result.teamRating >= 8 ? DATA : result.teamRating >= 6 ? WARN : SCAN;
+  const tabs = [{
+    id: "team",
+    label: "Team"
+  }, {
+    id: "training",
+    label: "Training"
+  }, {
+    id: "guide",
+    label: "Battle guide"
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 14,
+      animation: "scanIn 0.4s ease"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      fontFamily: MONO,
+      textTransform: "uppercase"
+    }
+  }, "AI pro analysis"), /*#__PURE__*/React.createElement("button", {
+    onClick: onReset,
+    style: {
+      fontSize: 10.5,
+      color: DIM,
+      background: "none",
+      border: `1px solid ${LINE}`,
+      borderRadius: 4,
+      padding: "3px 8px",
+      cursor: "pointer"
+    }
+  }, "Re-analyse")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "11px 13px",
+      background: DATA + "12",
+      border: `1px solid ${DATA}33`,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: DIM,
+      marginBottom: 2,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em"
+    }
+  }, "Win Condition"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      color: CREAM,
+      fontWeight: 700,
+      marginBottom: 6
+    }
+  }, result.winCondition), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, result.strategyOverview)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      padding: "9px 13px",
+      background: PANEL,
+      border: `1px solid ${LINE}`,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 30,
+      fontWeight: 800,
+      color: ratingColor,
+      fontFamily: MONO,
+      lineHeight: 1
+    }
+  }, result.teamRating, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14,
+      color: DIM
+    }
+  }, "/10")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, result.ratingReason)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      background: INK,
+      borderRadius: 7,
+      padding: 3,
+      border: `1px solid ${LINE}`
+    }
+  }, tabs.map(t => /*#__PURE__*/React.createElement("button", {
+    key: t.id,
+    onClick: () => setSection(t.id),
+    style: {
+      flex: 1,
+      padding: "7px",
+      borderRadius: 5,
+      border: "none",
+      cursor: "pointer",
+      fontSize: 12,
+      fontWeight: 600,
+      background: section === t.id ? PANEL : "transparent",
+      color: section === t.id ? CREAM : DIM
+    }
+  }, t.label))), section === "team" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8
+    }
+  }, (result.members || []).map((m, i) => {
+    const p = team[i];
+    return /*#__PURE__*/React.createElement("div", {
+      key: m.name,
+      style: {
+        border: `1px solid ${LINE}`,
+        borderRadius: 8,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "9px 11px",
+        background: PANEL,
+        borderBottom: `1px solid ${LINE}`
+      }
+    }, p && /*#__PURE__*/React.createElement("img", {
+      src: spriteUrl(p.id),
+      width: 28,
+      height: 28,
+      style: {
+        imageRendering: "pixelated"
+      },
+      onError: e => e.target.style.opacity = 0,
+      alt: ""
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: CREAM
+      }
+    }, m.name), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: DATA
+      }
+    }, m.role)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        color: WARN,
+        fontStyle: "italic"
+      }
+    }, m.heldItem)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "8px 11px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: DIM,
+        marginBottom: 8,
+        lineHeight: 1.4
+      }
+    }, m.whyTheyFit), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10.5,
+        color: DIM,
+        marginBottom: 4,
+        fontFamily: MONO,
+        textTransform: "uppercase"
+      }
+    }, "Key moves"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 5,
+        flexWrap: "wrap"
+      }
+    }, (m.keyMoves || []).map(mv => /*#__PURE__*/React.createElement("span", {
+      key: mv,
+      style: {
+        fontSize: 11,
+        padding: "3px 8px",
+        background: INK,
+        border: `1px solid ${LINE}`,
+        borderRadius: 4,
+        color: CREAM
+      }
+    }, mv)))));
+  }), result.threats?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "10px 12px",
+      background: SCAN + "10",
+      border: `1px solid ${SCAN}33`,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: SCAN,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em",
+      marginBottom: 6
+    }
+  }, "Threats to watch out for"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 5,
+      flexWrap: "wrap"
+    }
+  }, result.threats.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    style: {
+      fontSize: 11.5,
+      padding: "3px 9px",
+      background: SCAN + "18",
+      border: `1px solid ${SCAN}33`,
+      borderRadius: 4,
+      color: "#F0B8B0"
+    }
+  }, t)))), result.swapSuggestion && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "10px 12px",
+      background: WARN + "12",
+      border: `1px solid ${WARN}44`,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: WARN,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      marginBottom: 4
+    }
+  }, "Suggested swap"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: CREAM,
+      fontWeight: 600
+    }
+  }, "Replace ", /*#__PURE__*/React.createElement("strong", null, result.swapSuggestion.out), " → ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: DATA
+    }
+  }, result.swapSuggestion.in)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      marginTop: 4
+    }
+  }, result.swapSuggestion.reason))), section === "training" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, "In Pokémon Champions you can fully max two stats via training. These are the optimal spreads for each team member's role."), (result.members || []).map((m, i) => {
+    const p = team[i];
+    const tr = m.training || {};
+    // Fallback heuristic if AI didn't return training data
+    const heur = p ? suggestTraining(p.roles || [], p.stats || {}) : null;
+    const primary = tr.primary || heur?.primaryLabel;
+    const secondary = tr.secondary || heur?.secondaryLabel;
+    const avoid = tr.avoid || heur?.avoidLabel;
+    const spread = tr.spread || (primary && secondary ? `252 ${primary} / 252 ${secondary} / 4 HP` : "—");
+    const reasoning = tr.reasoning || heur?.focus || "";
+    return /*#__PURE__*/React.createElement("div", {
+      key: m.name,
+      style: {
+        border: `1px solid ${LINE}`,
+        borderRadius: 8,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 11px",
+        background: PANEL,
+        borderBottom: `1px solid ${LINE}`
+      }
+    }, p && /*#__PURE__*/React.createElement("img", {
+      src: spriteUrl(p.id),
+      width: 22,
+      height: 22,
+      style: {
+        imageRendering: "pixelated"
+      },
+      onError: e => e.target.style.opacity = 0,
+      alt: ""
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: CREAM,
+        flex: 1
+      }
+    }, m.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10.5,
+        color: DIM,
+        fontFamily: MONO
+      }
+    }, m.role)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "9px 11px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        fontFamily: MONO,
+        color: DATA,
+        letterSpacing: "0.04em"
+      }
+    }, spread), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 6,
+        flexWrap: "wrap",
+        alignItems: "center"
+      }
+    }, primary && /*#__PURE__*/React.createElement(StatPill, {
+      label: primary,
+      highlight: true
+    }), secondary && /*#__PURE__*/React.createElement(StatPill, {
+      label: secondary,
+      highlight: true
+    }), avoid && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: DIM
+      }
+    }, "avoid"), /*#__PURE__*/React.createElement(StatPill, {
+      label: avoid,
+      highlight: false
+    }))), tr.nature && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: DIM
+      }
+    }, "Nature: ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: CREAM
+      }
+    }, tr.nature || heur?.nature || "—")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: DIM,
+        lineHeight: 1.5
+      }
+    }, reasoning)));
+  })), section === "guide" && result.battleGuide && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "Lead choice",
+    content: result.battleGuide.leadChoice,
+    color: SCAN
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 1,
+      background: LINE,
+      margin: "2px 0 10px"
+    }
+  }), /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "Opening turns (1–3)",
+    content: result.battleGuide.openingTurns,
+    color: DATA
+  }), /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "Setup windows",
+    content: result.battleGuide.setupWindows,
+    color: WARN
+  }), /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "Mid-game pivoting",
+    content: result.battleGuide.midGame,
+    color: DATA
+  }), /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "Executing the win condition",
+    content: result.battleGuide.winConditionExecution,
+    color: SCAN
+  }), /*#__PURE__*/React.createElement(GuideBlock, {
+    label: "End-game reads",
+    content: result.battleGuide.endGame,
+    color: "#9B4F9E"
+  }), result.battleGuide.keyMatchups?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: DIM,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.07em",
+      marginBottom: 8
+    }
+  }, "Key matchups"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8
+    }
+  }, result.battleGuide.keyMatchups.map(kv => /*#__PURE__*/React.createElement("div", {
+    key: kv.situation,
+    style: {
+      border: `1px solid ${LINE}`,
+      borderRadius: 7,
+      padding: "9px 11px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: WARN,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, kv.situation), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, kv.response))))), result.battleGuide.commonMistakes?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      padding: "10px 12px",
+      background: SCAN + "0E",
+      border: `1px solid ${SCAN}33`,
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: SCAN,
+      fontFamily: MONO,
+      textTransform: "uppercase",
+      letterSpacing: "0.07em",
+      marginBottom: 8
+    }
+  }, "Common mistakes to avoid"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 6
+    }
+  }, result.battleGuide.commonMistakes.map((m, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: "flex",
+      gap: 8,
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: SCAN,
+      flexShrink: 0,
+      fontFamily: MONO
+    }
+  }, "✕"), /*#__PURE__*/React.createElement("span", null, m)))))), section === "guide" && !result.battleGuide && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      padding: 12
+    }
+  }, "Battle guide not available for this analysis. Try re-analysing."));
+}
 function AccountPanel({
   ready,
   user,
@@ -1764,6 +3006,14 @@ function TeamBuilderTab() {
   const [detailCache, setDetailCache] = useState({});
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
+  const [proAnalysis, setProAnalysis] = useState(null); // { poolAnalysis, team, archetype, apiAnalysis }
+  const [aiProvider, setAiProvider] = useState(() => localStorage.getItem("pokedex-ai-provider") || "gemini");
+  const [claudeKey, setClaudeKey] = useState(() => localStorage.getItem("pokedex-claude-key") || "");
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("pokedex-gemini-key") || "");
+  const [showApiKeyField, setShowApiKeyField] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [aiError, setAiError] = useState(null);
   const [movesetState, setMovesetState] = useState({});
   const [suggestingMovesets, setSuggestingMovesets] = useState(false);
   const fullDataRef = useRef({});
@@ -1828,7 +3078,6 @@ function TeamBuilderTab() {
     saveOwned(exists ? owned.filter(o => o.id !== p.id) : [...owned, p]);
   };
   const toggleTeam = p => {
-    setAutoNotes(null);
     setTeam(cur => cur.find(c => c.id === p.id) ? cur.filter(c => c.id !== p.id) : cur.length >= 6 ? cur : [...cur, p]);
   };
   const handleBulkAdd = () => {
@@ -1870,31 +3119,184 @@ function TeamBuilderTab() {
       setLoadingTypes(false);
     });
   }, [owned, team, detailCache]);
-  const handleAutoBuild = async () => {
+  const saveClaudeKey = k => {
+    setClaudeKey(k);
+    try {
+      localStorage.setItem("pokedex-claude-key", k);
+    } catch {}
+  };
+  const saveGeminiKey = k => {
+    setGeminiKey(k);
+    try {
+      localStorage.setItem("pokedex-gemini-key", k);
+    } catch {}
+  };
+  const saveProvider = p => {
+    setAiProvider(p);
+    try {
+      localStorage.setItem("pokedex-ai-provider", p);
+    } catch {}
+  };
+  const activeKey = aiProvider === "gemini" ? geminiKey : claudeKey;
+  const handleBuildCompetitive = async () => {
+    if (owned.length === 0) return;
     setAutoBuilding(true);
-    const missing = owned.filter(p => !detailCache[p.id]);
-    let cache = detailCache;
-    if (missing.length > 0) {
-      const results = await Promise.all(missing.map(p => getJSON(`${API}/pokemon/${p.id}`).then(d => ({
-        id: p.id,
-        types: d.types.map(t => t.type.name)
-      })).catch(() => ({
-        id: p.id,
-        types: []
-      }))));
-      cache = {
-        ...cache
-      };
-      results.forEach(r => cache[r.id] = r.types);
-      setDetailCache(cache);
-    }
-    const {
-      team: built,
-      notes
-    } = autoBuildTeam(owned, cache, 6);
-    setTeam(built);
-    setAutoNotes(notes);
+    setProAnalysis(null);
+    setAiResult(null);
+    setAiError(null);
+
+    // Step 1: fetch full data for every owned Pokémon
+    const missing = owned.filter(p => !fullDataRef.current[p.id]);
+    await Promise.all(missing.map(async p => {
+      try {
+        const d = await getJSON(`${API}/pokemon/${p.id}`);
+        fullDataRef.current[p.id] = d;
+        const types = d.types.map(t => t.type.name);
+        setDetailCache(c => ({
+          ...c,
+          [p.id]: types
+        }));
+      } catch {}
+    }));
+
+    // Step 2: analyse the pool
+    const analyzedPool = analyzePool(owned, fullDataRef.current);
+
+    // Step 3: build team with competitive engine
+    const builtTeam = buildCompetitiveTeam(analyzedPool, 6);
+    const archetype = detectArchetype(builtTeam);
+    setTeam(builtTeam);
+    setAutoNotes(null);
+    setProAnalysis({
+      poolAnalysis: analyzedPool,
+      team: builtTeam,
+      archetype
+    });
     setAutoBuilding(false);
+  };
+  const handleAiDeepAnalysis = async () => {
+    if (!activeKey || !proAnalysis) return;
+    setAiLoading(true);
+    setAiError(null);
+    const teamData = proAnalysis.team.map(p => ({
+      name: prettyName(p.name),
+      types: p.types,
+      roles: p.roles,
+      bst: p.bst,
+      stats: p.stats
+    }));
+    const poolSummary = proAnalysis.poolAnalysis.slice(0, 20).map(p => `${prettyName(p.name)} (${(p.types || []).join("/")} — ${(p.roles || []).join(", ")} — BST ${p.bst})`).join("\n");
+    const prompt = `You are an elite competitive Pokémon Singles coach who has trained World Championship-level players. This player uses Pokémon Champions (mobile game).
+
+IMPORTANT GAME CONTEXT — Pokémon Champions specifics:
+- Training system lets you boost stats (like EVs) — each Pokémon can maximise two stats fully
+- Available held items: type-boosting items (Charcoal, Mystic Water, etc.), Leftovers, Focus Sash, Choice Scarf, Shell Bell, Scope Lens, Mega Stones (for eligible Pokémon), resist berries
+- No Choice Band/Specs/Life Orb in Champions
+- Format: Singles (6v6, pick 6)
+
+The player's full available pool:
+${poolSummary}
+
+The algorithm picked this team of 6:
+${teamData.map((p, i) => `${i + 1}. ${p.name} [${p.types.join("/")}] — ${p.roles.join(", ")} — BST ${p.bst} — Stats: ${JSON.stringify(p.stats)}`).join("\n")}
+
+Give an ELITE-LEVEL analysis covering everything. Be direct, specific, think like a coach preparing a player for a tournament.
+
+Respond ONLY in JSON (no markdown, no preamble):
+{
+  "winCondition": "one sentence — the exact thing this team is trying to do to win",
+  "archetype": "team archetype name",
+  "strategyOverview": "2-3 sentences on the overall game plan and why these 6 synergise",
+  "threats": ["specific threat 1", "specific threat 2", "specific threat 3"],
+  "teamRating": 7,
+  "ratingReason": "honest rating explanation",
+  "members": [
+    {
+      "name": "Pokemon Name",
+      "role": "exact role in THIS team",
+      "keyMoves": ["Move 1", "Move 2", "Move 3", "Move 4"],
+      "heldItem": "Champions-legal item",
+      "whyTheyFit": "1 sentence on synergy with team",
+      "training": {
+        "primary": "Stat name to max first",
+        "secondary": "Stat name to max second",
+        "avoid": "Stat to leave at base",
+        "spread": "e.g. 252 Atk / 252 Spe / 4 HP",
+        "reasoning": "why this exact spread"
+      }
+    }
+  ],
+  "battleGuide": {
+    "leadChoice": "which Pokemon to lead with and why",
+    "openingTurns": "turns 1-3 — specific moves to use, what to scout",
+    "midGame": "pivoting strategy, momentum management",
+    "setupWindows": "when and how to get sweepers going",
+    "winConditionExecution": "step-by-step how to close out",
+    "endGame": "end-game reads when both sides are down to 3-4",
+    "keyMatchups": [
+      { "situation": "Against hyper-offense", "response": "..." },
+      { "situation": "Against stall/defense", "response": "..." },
+      { "situation": "Against Trick Room", "response": "..." }
+    ],
+    "commonMistakes": ["mistake 1", "mistake 2", "mistake 3"]
+  },
+  "swapSuggestion": {
+    "out": "Pokemon to bench",
+    "in": "Pokemon from pool",
+    "reason": "why this swap helps"
+  }
+}`;
+    try {
+      let text = "";
+      if (aiProvider === "gemini") {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: prompt
+              }]
+            }],
+            generationConfig: {
+              maxOutputTokens: 4000,
+              temperature: 0.7
+            }
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      } else {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": activeKey,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 4000,
+            messages: [{
+              role: "user",
+              content: prompt
+            }]
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        text = data.content?.[0]?.text || "";
+      }
+      const jsonStr = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(jsonStr);
+      setAiResult(parsed);
+    } catch (e) {
+      setAiError(e.message || "Something went wrong. Check your API key and try again.");
+    }
+    setAiLoading(false);
   };
   const handleSuggestMovesets = async () => {
     setSuggestingMovesets(true);
@@ -2273,17 +3675,17 @@ function TeamBuilderTab() {
       marginBottom: 16
     }
   }, "No Pokémon added yet. Tap \"Manage roster\" to type or pick the ones you have.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
-    onClick: handleAutoBuild,
+    onClick: handleBuildCompetitive,
     disabled: autoBuilding,
     style: {
       width: "100%",
-      marginBottom: 14,
-      background: SCAN,
+      marginBottom: 10,
+      background: autoBuilding ? PANEL : SCAN,
       border: "none",
       color: "#fff",
       borderRadius: 7,
-      padding: "11px",
-      fontSize: 13.5,
+      padding: "12px",
+      fontSize: 14,
       fontWeight: 700,
       cursor: autoBuilding ? "default" : "pointer",
       opacity: autoBuilding ? 0.7 : 1,
@@ -2295,7 +3697,14 @@ function TeamBuilderTab() {
   }, autoBuilding ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SpinIcon, {
     size: 15,
     color: "#fff"
-  }), " Building best team...") : "⚡ Auto-build best team for battling"), /*#__PURE__*/React.createElement("div", {
+  }), " Analysing your pool...") : "⚔️ Build competitive team"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      textAlign: "center",
+      marginBottom: 14
+    }
+  }, "Analyses roles, synergy & strategy — not just types"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: DIM,
@@ -2304,7 +3713,7 @@ function TeamBuilderTab() {
       textTransform: "uppercase",
       marginBottom: 8
     }
-  }, "Or tap up to 6 yourself (", team.length, "/6)"), /*#__PURE__*/React.createElement("div", {
+  }, "Or pick your own (", team.length, "/6)"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
@@ -2313,9 +3722,13 @@ function TeamBuilderTab() {
     }
   }, owned.map(p => {
     const inTeam = team.some(t => t.id === p.id);
+    const analysis = proAnalysis?.poolAnalysis?.find(x => x.id === p.id);
     return /*#__PURE__*/React.createElement("button", {
       key: p.id,
-      onClick: () => toggleTeam(p),
+      onClick: () => {
+        setAutoNotes(null);
+        toggleTeam(p);
+      },
       style: {
         display: "flex",
         alignItems: "center",
@@ -2337,46 +3750,389 @@ function TeamBuilderTab() {
       },
       onError: e => e.target.style.opacity = 0,
       alt: ""
-    }), /*#__PURE__*/React.createElement("span", {
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
-        flex: 1,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap"
       }
-    }, prettyName(p.name)));
-  }))), autoNotes && team.length > 0 && /*#__PURE__*/React.createElement(Section, {
-    title: "Why this team"
+    }, prettyName(p.name)), analysis && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 9.5,
+        color: ROLE_COLORS[analysis.roles?.[0]] || DIM,
+        fontFamily: MONO
+      }
+    }, analysis.roles?.[0])));
+  }))), proAnalysis && /*#__PURE__*/React.createElement(Section, {
+    title: `Pool analysis — ${proAnalysis.poolAnalysis.filter(p => p.bst > 0).length} Pokémon evaluated`
   }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Each Pokémon scored by base stats and assigned a competitive role. Higher BST shown first."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
-      gap: 6
+      gap: 5,
+      maxHeight: 240,
+      overflowY: "auto"
     }
-  }, team.map((p, i) => {
-    const note = autoNotes[i];
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      style: {
-        display: "flex",
-        gap: 8,
-        alignItems: "flex-start",
-        fontSize: 12.5,
-        color: DIM
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontFamily: MONO,
-        color: SCAN,
-        flexShrink: 0
-      }
-    }, i + 1, "."), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", {
-      style: {
-        color: CREAM
-      }
-    }, prettyName(p.name)), note && note.newTypes.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, " — adds ", note.newTypes.map(prettyName).join("/"), " offense to the team") : /*#__PURE__*/React.createElement(React.Fragment, null, " — rounds out the lineup")));
-  }))), team.length > 0 && /*#__PURE__*/React.createElement(Section, {
+  }, proAnalysis.poolAnalysis.filter(p => p.bst > 0).slice(0, 20).map(p => /*#__PURE__*/React.createElement("div", {
+    key: p.id,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "5px 8px",
+      background: team.some(t => t.id === p.id) ? SCAN + "15" : PANEL,
+      border: `1px solid ${team.some(t => t.id === p.id) ? SCAN + "55" : LINE}`,
+      borderRadius: 6
+    }
+  }, /*#__PURE__*/React.createElement("img", {
+    src: spriteUrl(p.id),
+    width: 22,
+    height: 22,
+    style: {
+      imageRendering: "pixelated"
+    },
+    onError: e => e.target.style.opacity = 0,
+    alt: ""
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: CREAM
+    }
+  }, prettyName(p.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      flexWrap: "wrap",
+      marginTop: 2
+    }
+  }, (p.types || []).map(t => /*#__PURE__*/React.createElement(TypeChip, {
+    key: t,
+    t: t
+  })))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-end",
+      gap: 3
+    }
+  }, (p.roles || []).map(r => /*#__PURE__*/React.createElement(RoleBadge, {
+    key: r,
+    role: r
+  })), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: DIM,
+      fontFamily: MONO
+    }
+  }, "BST ", p.bst)))))), proAnalysis && team.length > 0 && /*#__PURE__*/React.createElement(Section, {
+    title: "Recommended team"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "10px 12px",
+      borderRadius: 8,
+      marginBottom: 12,
+      background: proAnalysis.archetype.color + "18",
+      border: `1px solid ${proAnalysis.archetype.color}44`
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: proAnalysis.archetype.color,
+      marginBottom: 3
+    }
+  }, proAnalysis.archetype.name), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, proAnalysis.archetype.desc)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 7
+    }
+  }, proAnalysis.team.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    key: p.id,
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "8px 10px",
+      background: PANEL,
+      border: `1px solid ${LINE}`,
+      borderRadius: 7
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 20,
+      height: 20,
+      borderRadius: "50%",
+      background: SCAN,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 10,
+      fontWeight: 700,
+      color: "#fff",
+      flexShrink: 0
+    }
+  }, i + 1), /*#__PURE__*/React.createElement("img", {
+    src: spriteUrl(p.id),
+    width: 30,
+    height: 30,
+    style: {
+      imageRendering: "pixelated"
+    },
+    onError: e => e.target.style.opacity = 0,
+    alt: ""
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: CREAM
+    }
+  }, prettyName(p.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4,
+      flexWrap: "wrap",
+      marginTop: 2
+    }
+  }, (p.types || []).map(t => /*#__PURE__*/React.createElement(TypeChip, {
+    key: t,
+    t: t
+  })), (p.roles || []).map(r => /*#__PURE__*/React.createElement(RoleBadge, {
+    key: r,
+    role: r
+  })))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: DIM,
+      fontFamily: MONO,
+      flexShrink: 0
+    }
+  }, "BST ", p.bst))))), proAnalysis && team.length > 0 && /*#__PURE__*/React.createElement(Section, {
+    title: "AI deep analysis (Pro-level)"
+  }, !aiResult && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: DIM,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }
+  }, "Get a Championship-level breakdown: exact stat spreads, 4-move sets, specific battle guide, threat list, and swap suggestions. Choose your AI provider below."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 6,
+      marginBottom: 14
+    }
+  }, [{
+    id: "gemini",
+    label: "🆓 Gemini",
+    sub: "Free forever",
+    color: "#4285F4"
+  }, {
+    id: "claude",
+    label: "⚡ Claude",
+    sub: "$5 free credit",
+    color: DATA
+  }].map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.id,
+    onClick: () => {
+      saveProvider(p.id);
+      setShowApiKeyField(true);
+    },
+    style: {
+      flex: 1,
+      padding: "10px 8px",
+      borderRadius: 8,
+      border: `2px solid ${aiProvider === p.id ? p.color : LINE}`,
+      background: aiProvider === p.id ? p.color + "18" : PANEL,
+      cursor: "pointer",
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: aiProvider === p.id ? p.color : CREAM
+    }
+  }, p.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: DIM,
+      marginTop: 2
+    }
+  }, p.sub)))), showApiKeyField && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8,
+      marginBottom: 12,
+      padding: "10px 12px",
+      background: INK,
+      border: `1px solid ${LINE}`,
+      borderRadius: 8
+    }
+  }, aiProvider === "gemini" ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: CREAM,
+      fontWeight: 600
+    }
+  }, "Gemini API key (100% free)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, "1. Go to ", /*#__PURE__*/React.createElement("a", {
+    href: "https://aistudio.google.com",
+    target: "_blank",
+    style: {
+      color: "#4285F4"
+    }
+  }, "aistudio.google.com"), /*#__PURE__*/React.createElement("br", null), "2. Sign in with Google → click ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: CREAM
+    }
+  }, "Get API key"), " → ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: CREAM
+    }
+  }, "Create API key"), /*#__PURE__*/React.createElement("br", null), "3. Copy and paste it below. No card, no expiry, genuinely free."), /*#__PURE__*/React.createElement("input", {
+    value: geminiKey,
+    onChange: e => saveGeminiKey(e.target.value),
+    placeholder: "AIza...",
+    type: "password",
+    style: {
+      background: PANEL,
+      border: `1px solid ${LINE}`,
+      borderRadius: 5,
+      padding: "8px 10px",
+      color: CREAM,
+      fontSize: 13,
+      fontFamily: MONO
+    }
+  }), geminiKey && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DATA
+    }
+  }, "✓ Gemini key saved in this browser")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: CREAM,
+      fontWeight: 600
+    }
+  }, "Claude API key"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      lineHeight: 1.5
+    }
+  }, "1. Go to ", /*#__PURE__*/React.createElement("a", {
+    href: "https://console.anthropic.com",
+    target: "_blank",
+    style: {
+      color: DATA
+    }
+  }, "console.anthropic.com"), " → sign up (free)", /*#__PURE__*/React.createElement("br", null), "2. You get ~$5 free credit automatically — no card needed", /*#__PURE__*/React.createElement("br", null), "3. Click ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: CREAM
+    }
+  }, "API Keys → Create Key"), " → paste below"), /*#__PURE__*/React.createElement("input", {
+    value: claudeKey,
+    onChange: e => saveClaudeKey(e.target.value),
+    placeholder: "sk-ant-...",
+    type: "password",
+    style: {
+      background: PANEL,
+      border: `1px solid ${LINE}`,
+      borderRadius: 5,
+      padding: "8px 10px",
+      color: CREAM,
+      fontSize: 13,
+      fontFamily: MONO
+    }
+  }), claudeKey && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DATA
+    }
+  }, "✓ Claude key saved in this browser"))), !showApiKeyField && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowApiKeyField(true),
+    style: {
+      fontSize: 11.5,
+      color: DIM,
+      background: "none",
+      border: "none",
+      cursor: "pointer",
+      padding: 0,
+      marginBottom: 10,
+      textDecoration: "underline"
+    }
+  }, activeKey ? "API key saved — change it" : "Tap to enter your API key"), aiError && /*#__PURE__*/React.createElement(ErrorBox, {
+    msg: `AI error: ${aiError}`
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: handleAiDeepAnalysis,
+    disabled: !activeKey || aiLoading,
+    style: {
+      width: "100%",
+      padding: "11px",
+      marginTop: 4,
+      background: activeKey ? aiProvider === "gemini" ? "#4285F422" : DATA + "1A" : PANEL,
+      border: `1px solid ${activeKey ? aiProvider === "gemini" ? "#4285F466" : DATA + "55" : LINE}`,
+      color: activeKey ? aiProvider === "gemini" ? "#4285F4" : DATA : DIM,
+      borderRadius: 7,
+      cursor: activeKey && !aiLoading ? "pointer" : "default",
+      fontSize: 13.5,
+      fontWeight: 700,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8
+    }
+  }, aiLoading ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SpinIcon, {
+    size: 14,
+    color: aiProvider === "gemini" ? "#4285F4" : DATA
+  }), " ", aiProvider === "gemini" ? "Gemini is thinking..." : "Claude is thinking...") : `🧠 Analyse with ${aiProvider === "gemini" ? "Gemini (free)" : "Claude"}`), !activeKey && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: DIM,
+      textAlign: "center",
+      marginTop: 8
+    }
+  }, "Select a provider above and paste your key to unlock this")), aiResult && /*#__PURE__*/React.createElement(AiAnalysisCard, {
+    result: aiResult,
+    team: proAnalysis.team,
+    onReset: () => setAiResult(null)
+  })), team.length > 0 && /*#__PURE__*/React.createElement(Section, {
     title: "Team analysis"
   }, loadingTypes && /*#__PURE__*/React.createElement(Spinner, {
     text: "Checking typings..."
@@ -2457,7 +4213,41 @@ function TeamBuilderTab() {
   }, "Full coverage — every type has an answer.") : analysis.uncovered.map(t => /*#__PURE__*/React.createElement(TypeChip, {
     key: t,
     t: t
-  })))))), team.length > 0 && /*#__PURE__*/React.createElement(Section, {
+  })))))), team.length > 0 && !aiResult && proAnalysis && /*#__PURE__*/React.createElement(Section, {
+    title: "Stat training — Pokémon Champions"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: DIM,
+      marginBottom: 12,
+      lineHeight: 1.5
+    }
+  }, "Champions lets you fully max ", /*#__PURE__*/React.createElement("strong", {
+    style: {
+      color: CREAM
+    }
+  }, "two stats"), " per Pokémon via training. These spreads are based on each member's competitive role. The AI analysis (below) gives even more precise spreads once you run it."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10
+    }
+  }, proAnalysis.team.map(p => /*#__PURE__*/React.createElement(HeuristicSpreadCard, {
+    key: p.id,
+    pokemon: p
+  })))), team.length > 0 && !aiResult && proAnalysis && /*#__PURE__*/React.createElement(Section, {
+    title: "Battle playbook"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: DIM,
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Step-by-step guide for playing this exact team — lead choice, setup windows, mid-game pivots, end-game reads. Run the AI analysis below for an even deeper, personalised version."), /*#__PURE__*/React.createElement(HeuristicBattleGuide, {
+    team: proAnalysis.team,
+    archetype: proAnalysis.archetype
+  })), team.length > 0 && /*#__PURE__*/React.createElement(Section, {
     title: "Suggested movesets"
   }, /*#__PURE__*/React.createElement("button", {
     onClick: handleSuggestMovesets,
