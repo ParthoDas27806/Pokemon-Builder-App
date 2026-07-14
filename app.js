@@ -2957,9 +2957,10 @@ function TeamBuilderTab() {
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [proAnalysis, setProAnalysis] = useState(null); // { poolAnalysis, team, archetype, apiAnalysis }
+  const SITE_GEMINI_KEY = "AQ.Ab8RN6L-MZl-UzajTq_8YY-jsCFZ0yYhNc6HjVGL1kQJbwrCWA"; // ← paste your AIza... key here
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem("pokedex-ai-provider") || "gemini");
   const [claudeKey, setClaudeKey] = useState(() => localStorage.getItem("pokedex-claude-key") || "");
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("pokedex-gemini-key") || "");
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("pokedex-gemini-key") || SITE_GEMINI_KEY);
   const [showApiKeyField, setShowApiKeyField] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
@@ -3207,7 +3208,7 @@ Respond ONLY in JSON (no markdown, no preamble):
     try {
       let text = "";
       if (aiProvider === "gemini") {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${activeKey}`, {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
