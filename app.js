@@ -2957,10 +2957,10 @@ function TeamBuilderTab() {
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [autoBuilding, setAutoBuilding] = useState(false);
   const [proAnalysis, setProAnalysis] = useState(null); // { poolAnalysis, team, archetype, apiAnalysis }
-  const SITE_GEMINI_KEY = "AQ.Ab8RN6L-MZl-UzajTq_8YY-jsCFZ0yYhNc6HjVGL1kQJbwrCWA"; // ← paste your AIza... key here
-  const [aiProvider, setAiProvider] = useState(() => localStorage.getItem("pokedex-ai-provider") || "gemini");
+  const SITE_GROQ_KEY = "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"; // ← paste your gsk_... key here
+  const [aiProvider, setAiProvider] = useState(() => localStorage.getItem("pokedex-ai-provider") || "groq");
   const [claudeKey, setClaudeKey] = useState(() => localStorage.getItem("pokedex-claude-key") || "");
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem("pokedex-gemini-key") || SITE_GEMINI_KEY);
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem("pokedex-groq-key") || SITE_GROQ_KEY);
   const [showApiKeyField, setShowApiKeyField] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
@@ -3076,10 +3076,10 @@ function TeamBuilderTab() {
       localStorage.setItem("pokedex-claude-key", k);
     } catch {}
   };
-  const saveGeminiKey = k => {
-    setGeminiKey(k);
+  const saveGroqKey = k => {
+    setGroqKey(k);
     try {
-      localStorage.setItem("pokedex-gemini-key", k);
+      localStorage.setItem("pokedex-groq-key", k);
     } catch {}
   };
   const saveProvider = p => {
@@ -3088,7 +3088,7 @@ function TeamBuilderTab() {
       localStorage.setItem("pokedex-ai-provider", p);
     } catch {}
   };
-  const activeKey = aiProvider === "gemini" ? geminiKey : claudeKey;
+  const activeKey = aiProvider === "groq" ? groqKey : claudeKey;
   const handleBuildCompetitive = async () => {
     if (owned.length === 0) return;
     setAutoBuilding(true);
@@ -3207,27 +3207,26 @@ Respond ONLY in JSON (no markdown, no preamble):
 }`;
     try {
       let text = "";
-      if (aiProvider === "gemini") {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${activeKey}`, {
+      if (aiProvider === "groq") {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${activeKey}`
           },
           body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: prompt
-              }]
+            model: "llama-3.3-70b-versatile",
+            messages: [{
+              role: "user",
+              content: prompt
             }],
-            generationConfig: {
-              maxOutputTokens: 4000,
-              temperature: 0.7
-            }
+            max_tokens: 4000,
+            temperature: 0.7
           })
         });
         const data = await res.json();
         if (data.error) throw new Error(data.error.message);
-        text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        text = data.choices?.[0]?.message?.content || "";
       } else {
         const res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
@@ -3917,10 +3916,10 @@ Respond ONLY in JSON (no markdown, no preamble):
       marginBottom: 14
     }
   }, [{
-    id: "gemini",
-    label: "🆓 Gemini",
+    id: "groq",
+    label: "🆓 Groq",
     sub: "Free forever",
-    color: "#4285F4"
+    color: "#10B981"
   }, {
     id: "claude",
     label: "⚡ Claude",
@@ -3964,25 +3963,25 @@ Respond ONLY in JSON (no markdown, no preamble):
       border: `1px solid ${LINE}`,
       borderRadius: 8
     }
-  }, aiProvider === "gemini" ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, aiProvider === "groq" ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: CREAM,
       fontWeight: 600
     }
-  }, "Gemini API key (100% free)"), /*#__PURE__*/React.createElement("div", {
+  }, "Groq API key (100% free)"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: DIM,
       lineHeight: 1.5
     }
   }, "1. Go to ", /*#__PURE__*/React.createElement("a", {
-    href: "https://aistudio.google.com",
+    href: "https://console.groq.com",
     target: "_blank",
     style: {
-      color: "#4285F4"
+      color: "#10B981"
     }
-  }, "aistudio.google.com"), /*#__PURE__*/React.createElement("br", null), "2. Sign in with Google → click ", /*#__PURE__*/React.createElement("strong", {
+  }, "console.groq.com"), " → Sign up free", /*#__PURE__*/React.createElement("br", null), "2. Sign in with Google → click ", /*#__PURE__*/React.createElement("strong", {
     style: {
       color: CREAM
     }
@@ -3991,9 +3990,9 @@ Respond ONLY in JSON (no markdown, no preamble):
       color: CREAM
     }
   }, "Create API key"), /*#__PURE__*/React.createElement("br", null), "3. Copy and paste it below. No card, no expiry, genuinely free."), /*#__PURE__*/React.createElement("input", {
-    value: geminiKey,
-    onChange: e => saveGeminiKey(e.target.value),
-    placeholder: "AIza...",
+    value: groqKey,
+    onChange: e => saveGroqKey(e.target.value),
+    placeholder: "gsk_...",
     type: "password",
     style: {
       background: PANEL,
@@ -4004,7 +4003,7 @@ Respond ONLY in JSON (no markdown, no preamble):
       fontSize: 13,
       fontFamily: MONO
     }
-  }), geminiKey && /*#__PURE__*/React.createElement("div", {
+  }), groqKey && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: DATA
@@ -4071,9 +4070,9 @@ Respond ONLY in JSON (no markdown, no preamble):
       width: "100%",
       padding: "11px",
       marginTop: 4,
-      background: activeKey ? aiProvider === "gemini" ? "#4285F422" : DATA + "1A" : PANEL,
-      border: `1px solid ${activeKey ? aiProvider === "gemini" ? "#4285F466" : DATA + "55" : LINE}`,
-      color: activeKey ? aiProvider === "gemini" ? "#4285F4" : DATA : DIM,
+      background: activeKey ? aiProvider === "groq" ? "#10B98122" : DATA + "1A" : PANEL,
+      border: `1px solid ${activeKey ? aiProvider === "groq" ? "#10B98166" : DATA + "55" : LINE}`,
+      color: activeKey ? aiProvider === "groq" ? "#10B981" : DATA : DIM,
       borderRadius: 7,
       cursor: activeKey && !aiLoading ? "pointer" : "default",
       fontSize: 13.5,
@@ -4085,8 +4084,8 @@ Respond ONLY in JSON (no markdown, no preamble):
     }
   }, aiLoading ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SpinIcon, {
     size: 14,
-    color: aiProvider === "gemini" ? "#4285F4" : DATA
-  }), " ", aiProvider === "gemini" ? "Gemini is thinking..." : "Claude is thinking...") : `🧠 Analyse with ${aiProvider === "gemini" ? "Gemini (free)" : "Claude"}`), !activeKey && /*#__PURE__*/React.createElement("div", {
+    color: aiProvider === "groq" ? "#10B981" : DATA
+  }), " ", aiProvider === "groq" ? "Groq is thinking..." : "Claude is thinking...") : `🧠 Analyse with ${aiProvider === "groq" ? "Groq (free)" : "Claude"}`), !activeKey && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: DIM,
