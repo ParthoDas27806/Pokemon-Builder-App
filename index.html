@@ -11,12 +11,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
   const FIREBASE_CONFIG = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID",
+    apiKey: "YOUR_API_KEY", authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID", storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID", appId: "YOUR_APP_ID",
   };
   window.__FIREBASE_READY = false;
   try {
@@ -42,14 +39,13 @@
 <div id="error-banner"></div>
 <div id="root"><div id="boot-status">Loading Pokédex Terminal…</div></div>
 <script>
-  window.addEventListener("error", function (e) {
+  window.addEventListener("error", function(e) {
     var b = document.getElementById("error-banner");
     b.style.display = "block";
-    b.textContent = "Error: " + (e.error && e.error.message ? e.error.message : e.message) +
-      (e.filename ? ("
-File: " + e.filename + ":" + e.lineno) : "");
+    b.textContent = "Error: " + (e.error ? e.error.message : e.message) + (e.filename ? "
+File: " + e.filename + ":" + e.lineno : "");
   });
-  window.addEventListener("unhandledrejection", function (e) {
+  window.addEventListener("unhandledrejection", function(e) {
     var b = document.getElementById("error-banner");
     b.style.display = "block";
     b.textContent = "Promise error: " + (e.reason && e.reason.message ? e.reason.message : e.reason);
