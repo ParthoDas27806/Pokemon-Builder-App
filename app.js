@@ -1783,13 +1783,21 @@ function CoverageGroup({
 
 /* ---------------- Team Builder tab (uses localStorage) ---------------- */
 const STORAGE_KEY = "pokedex-terminal-owned-roster";
+const STAT_LABELS = {
+  hp: "HP",
+  attack: "Attack",
+  defense: "Defense",
+  "special-attack": "Sp. Atk",
+  "special-defense": "Sp. Def",
+  speed: "Speed"
+};
 const STAT_COLORS = {
-  HP: "#E5483D",
-  Attack: "#E5602C",
-  Defense: "#3E8FD0",
-  "Sp. Atk": "#9B4F9E",
-  "Sp. Def": "#5FD9C4",
-  Speed: "#E8C53A"
+  hp: "#E5483D",
+  attack: "#E5602C",
+  defense: "#3E8FD0",
+  "special-attack": "#9B4F9E",
+  "special-defense": "#5FD9C4",
+  speed: "#E8C53A"
 };
 function StatPill({
   label,
