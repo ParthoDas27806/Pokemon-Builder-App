@@ -356,17 +356,40 @@ const MEGA_STONES = {
 };
 
 // Heuristic held-item suggestions limited to what's actually purchasable in Pokémon Champions.
-function suggestChampionsItems(name, types) {
+function suggestChampionsItems(name, types, knownMoveTypes) {
+  // knownMoveTypes = Set of move types this pokemon actually has in their learnset
   const opts = [];
   if (MEGA_STONES[name]) opts.push({
     item: MEGA_STONES[name],
-    reason: "Lets it Mega Evolve in battle"
+    reason: "Lets it Mega Evolve — biggest power spike available"
   });
-  const stab = TYPE_BOOST_ITEMS[types[0]];
-  if (stab) opts.push({
-    item: stab,
-    reason: `Boosts its own ${prettyName(types[0])}-type moves by 20%`
-  });
+
+  // Only suggest type-boost items for types the pokemon ACTUALLY has damaging moves for
+  for (const t of types) {
+    if (!knownMoveTypes || knownMoveTypes.has(t)) {
+      const boost = TYPE_BOOST_ITEMS[t];
+      if (boost) {
+        opts.push({
+          item: boost,
+          reason: `Boosts its ${prettyName(t)}-type STAB moves by 20%`
+        });
+        break;
+      }
+    }
+  }
+  // If no STAB type boost matched, try any type it has offensive moves for
+  if (opts.length < 2 && knownMoveTypes) {
+    for (const t of knownMoveTypes) {
+      const boost = TYPE_BOOST_ITEMS[t];
+      if (boost && !opts.some(o => o.item === boost)) {
+        opts.push({
+          item: boost,
+          reason: `Boosts its ${prettyName(t)}-type moves by 20%`
+        });
+        break;
+      }
+    }
+  }
   let worst = null,
     worstMult = 1;
   TYPE_LIST.forEach(atk => {
@@ -378,15 +401,15 @@ function suggestChampionsItems(name, types) {
   });
   if (worst && RESIST_BERRIES[worst]) opts.push({
     item: RESIST_BERRIES[worst],
-    reason: `Softens its ${prettyName(worst)} weakness (×${worstMult})`
+    reason: `One-time softening of its ×${worstMult} ${prettyName(worst)} weakness`
   });
   opts.push({
     item: "Leftovers",
-    reason: "Safe passive recovery every turn"
+    reason: "Passive HP recovery every turn — keeps it alive longer"
   });
   opts.push({
     item: "Focus Sash",
-    reason: "Survives one hit at full HP if it's frail"
+    reason: "Guarantees survival from full HP against a one-hit-KO"
   });
   return opts.slice(0, 4);
 }
@@ -505,40 +528,21 @@ function suggestTraining(roles, stats) {
     avoidLabel: rec.avoid ? STAT_FULL[rec.avoid] : null
   };
 }
-const STATUS_KEYWORDS = ["protect", "recover", "roost", "swords-dance", "calm-mind", "toxic", "will-o-wisp", "stealth-rock", "substitute", "nasty-plot", "iron-defense", "agility", "taunt", "thunder-wave", "spore", "sleep-powder", "synthesis", "moonlight", "morning-sun", "rest", "curse", "bulk-up", "dragon-dance"];
-function collectCandidateMoveNames(full) {
-  const seen = new Set();
-  const lvl = [];
-  const tm = [];
-  full.moves.forEach(m => {
-    const detail = m.version_group_details[m.version_group_details.length - 1];
-    const method = detail?.move_learn_method?.name;
-    if (seen.has(m.move.name)) return;
-    if (method === "level-up") {
-      lvl.push({
-        name: m.move.name,
-        level: detail.level_learned_at
-      });
-      seen.add(m.move.name);
-    } else if (method === "machine" && tm.length < 15) {
-      tm.push(m.move.name);
-      seen.add(m.move.name);
-    }
-  });
-  lvl.sort((a, b) => b.level - a.level);
-  return [...lvl.slice(0, 12).map(m => m.name), ...tm];
-}
+// Status moves worth running — must be in actual learnset to be suggested
+const GOOD_STATUS = new Set(["swords-dance", "nasty-plot", "dragon-dance", "bulk-up", "calm-mind", "iron-defense", "agility", "roost", "recover", "soft-boiled", "moonlight", "synthesis", "morning-sun", "toxic", "will-o-wisp", "thunder-wave", "taunt", "protect", "substitute", "stealth-rock", "spikes", "leech-seed", "rest", "sleep-powder", "spore", "haze", "encore", "trick", "tailwind", "trick-room", "quiver-dance", "shell-smash", "coil", "work-up"]);
 function pickMoveset(full, moveDetails) {
   const stats = {};
   full.stats.forEach(s => stats[s.stat.name] = s.base_stat);
   const preferredClass = (stats.attack || 0) >= (stats["special-attack"] || 0) ? "physical" : "special";
   const types = full.types.map(t => t.type.name);
   const names = collectCandidateMoveNames(full);
+
+  // Score all damaging moves
   const scored = names.map(name => {
     const d = moveDetails[name];
-    if (!d || d.power == null) return null;
+    if (!d || !d.power || d.power <= 0) return null;
     const stab = types.includes(d.type) ? 1.5 : 1;
-    const classMatch = d.dmgClass === preferredClass ? 1.2 : 0.75;
+    const classMatch = d.dmgClass === preferredClass ? 1.2 : 0.7;
     return {
       name,
       type: d.type,
@@ -546,34 +550,32 @@ function pickMoveset(full, moveDetails) {
       dmgClass: d.dmgClass,
       score: d.power * stab * classMatch
     };
-  }).filter(Boolean);
-  scored.sort((a, b) => b.score - a.score);
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+
+  // Pick top 3 damaging moves, avoiding type duplicates
   const picked = [];
   const usedTypes = new Set();
   for (const m of scored) {
     if (picked.length >= 3) break;
-    if (usedTypes.has(m.type)) continue;
-    picked.push(m);
-    usedTypes.add(m.type);
+    if (!usedTypes.has(m.type)) {
+      picked.push(m);
+      usedTypes.add(m.type);
+    }
   }
+  // Fill to 3 if not enough type-diverse options
   for (const m of scored) {
     if (picked.length >= 3) break;
     if (!picked.some(p => p.name === m.name)) picked.push(m);
   }
-  let statusPick = null;
-  for (const name of names) {
-    const d = moveDetails[name];
-    if (d && d.power == null && STATUS_KEYWORDS.some(k => name.includes(k))) {
-      statusPick = {
-        name,
-        type: d.type,
-        power: null,
-        dmgClass: "status"
-      };
-      break;
-    }
-  }
-  if (statusPick) picked.push(statusPick);else if (scored[3]) picked.push(scored[3]);
+
+  // 4th slot: best status move actually in their learnset
+  const statusPick = names.find(n => GOOD_STATUS.has(n) && moveDetails[n]);
+  if (statusPick) picked.push({
+    name: statusPick,
+    type: moveDetails[statusPick]?.type,
+    power: null,
+    dmgClass: "status"
+  });else if (scored[3] && !picked.some(p => p.name === scored[3].name)) picked.push(scored[3]);
   return picked.slice(0, 4);
 }
 function parseRosterText(text, allList) {
@@ -3143,65 +3145,85 @@ function TeamBuilderTab() {
       stats: p.stats
     }));
     const poolSummary = proAnalysis.poolAnalysis.slice(0, 20).map(p => `${prettyName(p.name)} (${(p.types || []).join("/")} — ${(p.roles || []).join(", ")} — BST ${p.bst})`).join("\n");
-    const prompt = `You are an elite competitive Pokémon Singles coach who has trained World Championship-level players. This player uses Pokémon Champions (mobile game).
 
-IMPORTANT GAME CONTEXT — Pokémon Champions specifics:
-- Training system lets you boost stats (like EVs) — each Pokémon can maximise two stats fully
-- Available held items: type-boosting items (Charcoal, Mystic Water, etc.), Leftovers, Focus Sash, Choice Scarf, Shell Bell, Scope Lens, Mega Stones (for eligible Pokémon), resist berries
-- No Choice Band/Specs/Life Orb in Champions
-- Format: Singles (6v6, pick 6)
+    // Build actual learnset summary per team member from already-fetched move data
+    const memberLearnsets = proAnalysis.team.map(p => {
+      const full = fullDataRef.current[p.id];
+      const learnableNames = full ? collectCandidateMoveNames(full) : [];
+      const withData = learnableNames.map(n => {
+        const d = moveDetailRef.current[n];
+        if (!d) return null;
+        if (d.power > 0) return `${prettyName(n)} (${d.type}, ${d.dmgClass}, PWR ${d.power})`;
+        if (GOOD_STATUS.has(n)) return `${prettyName(n)} (status)`;
+        return null;
+      }).filter(Boolean);
+      return {
+        name: prettyName(p.name),
+        types: p.types,
+        roles: p.roles,
+        bst: p.bst,
+        stats: p.stats,
+        learnset: withData.slice(0, 30)
+      };
+    });
+    const prompt = `You are an elite competitive Pokémon Singles coach preparing a player for Pokémon Champions (mobile game).
 
-The player's full available pool:
+STRICT RULES — VIOLATING THESE MAKES THE ANALYSIS USELESS:
+1. ONLY suggest moves that appear in the pokemon's "LEARNABLE MOVES" list below. If a move isn't listed, do NOT suggest it.
+2. For held items: ONLY suggest type-boosting items (e.g. Charcoal, Dragon Fang) if the pokemon has a DAMAGING move of that type in their learnset. Mystic Water = only if they have a Water damaging move. Never suggest a type boost for a type they can't attack with.
+3. Available held items in Champions: type-boosting items, Leftovers, Focus Sash, Choice Scarf, Shell Bell, Scope Lens, Mega Stones, resist berries. NO Choice Band, NO Choice Specs, NO Life Orb.
+4. Format is Singles 6v6.
+5. Do not invent moves. If unsure, pick a different move from the learnset.
+
+TEAM TO ANALYSE:
+${memberLearnsets.map((p, i) => `
+${i + 1}. ${p.name} [${p.types.join("/")}] — ${p.roles.join(", ")} — BST ${p.bst}
+   Stats: HP ${p.stats.hp} / Atk ${p.stats.attack} / Def ${p.stats.defense} / SpA ${p.stats["special-attack"]} / SpD ${p.stats["special-defense"]} / Spe ${p.stats.speed}
+   LEARNABLE MOVES (only use from this list): ${p.learnset.join(", ")}
+`).join("")}
+
+AVAILABLE POOL (for swap suggestion):
 ${poolSummary}
 
-The algorithm picked this team of 6:
-${teamData.map((p, i) => `${i + 1}. ${p.name} [${p.types.join("/")}] — ${p.roles.join(", ")} — BST ${p.bst} — Stats: ${JSON.stringify(p.stats)}`).join("\n")}
-
-Give an ELITE-LEVEL analysis covering everything. Be direct, specific, think like a coach preparing a player for a tournament.
-
-Respond ONLY in JSON (no markdown, no preamble):
+Respond ONLY in valid JSON (no markdown fences, no extra text):
 {
-  "winCondition": "one sentence — the exact thing this team is trying to do to win",
-  "archetype": "team archetype name",
-  "strategyOverview": "2-3 sentences on the overall game plan and why these 6 synergise",
-  "threats": ["specific threat 1", "specific threat 2", "specific threat 3"],
+  "winCondition": "one sentence — what this team does to win",
+  "archetype": "team archetype",
+  "strategyOverview": "2-3 sentences on game plan and synergy",
+  "threats": ["threat 1", "threat 2", "threat 3"],
   "teamRating": 7,
-  "ratingReason": "honest rating explanation",
+  "ratingReason": "honest assessment",
   "members": [
     {
       "name": "Pokemon Name",
-      "role": "exact role in THIS team",
-      "keyMoves": ["Move 1", "Move 2", "Move 3", "Move 4"],
-      "heldItem": "Champions-legal item",
-      "whyTheyFit": "1 sentence on synergy with team",
+      "role": "specific role in this team",
+      "keyMoves": ["Move from learnset 1", "Move from learnset 2", "Move from learnset 3", "Move from learnset 4"],
+      "heldItem": "Champions-legal item (type-boost only if matching offensive move exists)",
+      "whyTheyFit": "1 sentence",
       "training": {
-        "primary": "Stat name to max first",
-        "secondary": "Stat name to max second",
-        "avoid": "Stat to leave at base",
+        "primary": "stat name",
+        "secondary": "stat name",
+        "avoid": "stat name",
         "spread": "e.g. 252 Atk / 252 Spe / 4 HP",
-        "reasoning": "why this exact spread"
+        "reasoning": "why this spread for this role"
       }
     }
   ],
   "battleGuide": {
-    "leadChoice": "which Pokemon to lead with and why",
-    "openingTurns": "turns 1-3 — specific moves to use, what to scout",
-    "midGame": "pivoting strategy, momentum management",
-    "setupWindows": "when and how to get sweepers going",
-    "winConditionExecution": "step-by-step how to close out",
-    "endGame": "end-game reads when both sides are down to 3-4",
+    "leadChoice": "who to lead and why",
+    "openingTurns": "turns 1-3 plan",
+    "midGame": "pivoting and momentum",
+    "setupWindows": "when to set up sweepers",
+    "winConditionExecution": "how to close out",
+    "endGame": "late game reads",
     "keyMatchups": [
-      { "situation": "Against hyper-offense", "response": "..." },
-      { "situation": "Against stall/defense", "response": "..." },
-      { "situation": "Against Trick Room", "response": "..." }
+      { "situation": "vs Hyper Offense", "response": "..." },
+      { "situation": "vs Stall/Defense", "response": "..." },
+      { "situation": "vs Trick Room", "response": "..." }
     ],
     "commonMistakes": ["mistake 1", "mistake 2", "mistake 3"]
   },
-  "swapSuggestion": {
-    "out": "Pokemon to bench",
-    "in": "Pokemon from pool",
-    "reason": "why this swap helps"
-  }
+  "swapSuggestion": { "out": "name", "in": "name from pool", "reason": "why" }
 }`;
     try {
       let text = "";
@@ -4326,7 +4348,8 @@ Respond ONLY in JSON (no markdown, no preamble):
   }, "Only items actually purchasable in Pokémon Champions' Frontier Shop — one slot per Pokémon, so pick the best fit."), team.map(p => {
     const types = detailCache[p.id];
     if (!types) return null;
-    const suggestions = suggestChampionsItems(p.name, types);
+    const moveTypes = new Set(Object.values(moveDetailRef.current).filter(m => m && m.power > 0).map(m => m.type));
+    const suggestions = suggestChampionsItems(p.name, types, moveTypes);
     return /*#__PURE__*/React.createElement("div", {
       key: p.id,
       style: {
