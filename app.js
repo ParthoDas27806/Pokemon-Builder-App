@@ -910,22 +910,24 @@ function TypeChip({
   t,
   size = "sm"
 }) {
-  const pad = size === "sm" ? "2px 9px" : "3px 12px";
+  const pad = size === "sm" ? "2px 9px" : "4px 13px";
   const fs = size === "sm" ? "10.5px" : "12px";
   return /*#__PURE__*/React.createElement("span", {
+    className: "type-chip",
     style: {
-      background: TYPE_COLORS[t] + "22",
+      background: `linear-gradient(135deg, ${TYPE_COLORS[t]}28, ${TYPE_COLORS[t]}14)`,
       color: TYPE_COLORS[t],
-      border: `1px solid ${TYPE_COLORS[t]}55`,
+      border: `1px solid ${TYPE_COLORS[t]}60`,
       padding: pad,
       fontSize: fs,
-      borderRadius: 3,
+      borderRadius: 4,
       fontFamily: MONO,
-      letterSpacing: "0.06em",
+      letterSpacing: "0.07em",
       textTransform: "uppercase",
-      fontWeight: 600,
+      fontWeight: 700,
       display: "inline-block",
-      lineHeight: 1.5
+      lineHeight: 1.6,
+      boxShadow: `0 0 8px ${TYPE_COLORS[t]}20`
     }
   }, t);
 }
@@ -1012,22 +1014,17 @@ function ErrorBox({
 }
 function Section({
   title,
-  children
+  children,
+  accent
 }) {
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 18
+      marginBottom: 20
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "section-title",
     style: {
-      fontSize: 11,
-      color: DIM,
-      fontFamily: MONO,
-      letterSpacing: "0.1em",
-      textTransform: "uppercase",
-      marginBottom: 8,
-      borderBottom: `1px solid ${LINE}`,
-      paddingBottom: 6
+      color: accent || "#5A6270"
     }
   }, title), children);
 }
@@ -1606,14 +1603,15 @@ function PokedexTab({
   }, filtered.slice(0, visibleCount).map(p => /*#__PURE__*/React.createElement("button", {
     key: p.id,
     onClick: () => setSelectedId(p.name),
+    className: "card-hover",
     style: {
       display: "flex",
       alignItems: "center",
       gap: 10,
-      background: PANEL,
-      border: `1px solid ${LINE}`,
-      borderRadius: 6,
-      padding: "8px 10px",
+      background: "#13161C",
+      border: "1px solid #1E2329",
+      borderRadius: 10,
+      padding: "9px 11px",
       cursor: "pointer",
       color: CREAM,
       textAlign: "left"
@@ -3635,6 +3633,7 @@ Respond ONLY in JSON (no markdown, no preamble):
   }, "No Pokémon added yet. Tap \"Manage roster\" to type or pick the ones you have.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
     onClick: handleBuildCompetitive,
     disabled: autoBuilding,
+    className: autoBuilding ? "" : "poke-btn",
     style: {
       width: "100%",
       marginBottom: 6,
@@ -4387,6 +4386,156 @@ Respond ONLY in JSON (no markdown, no preamble):
 }
 
 /* ---------------- App shell ---------------- */
+/* ---- Global animation styles injected once ---- */
+function GlobalStyles() {
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+      body { background: #0A0C10; }
+
+      .poke-btn { transition: all 0.18s cubic-bezier(0.4,0,0.2,1); }
+      .poke-btn:hover { transform: translateY(-2px); filter: brightness(1.15); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }
+      .poke-btn:active { transform: translateY(0) scale(0.97); filter: brightness(0.95); }
+
+      .tab-btn { transition: all 0.22s cubic-bezier(0.4,0,0.2,1); }
+      .tab-btn:hover { transform: translateY(-2px); }
+      .tab-btn:active { transform: scale(0.97); }
+
+      .card-hover { transition: border-color 0.2s, box-shadow 0.2s, transform 0.18s; cursor: pointer; }
+      .card-hover:hover { border-color: #3D4552 !important; box-shadow: 0 6px 28px rgba(0,0,0,0.45); transform: translateY(-2px); }
+      .card-hover:active { transform: translateY(0) scale(0.99); }
+
+      .type-chip { transition: transform 0.14s, filter 0.14s, box-shadow 0.14s; cursor: pointer; }
+      .type-chip:hover { transform: scale(1.1) translateY(-1px); filter: brightness(1.25); }
+
+      .glow-red  { box-shadow: 0 0 24px rgba(229,72,61,0.45),  0 0 60px rgba(229,72,61,0.15); }
+      .glow-teal { box-shadow: 0 0 16px rgba(95,217,196,0.4),  0 0 40px rgba(95,217,196,0.12); }
+      .glow-gold { box-shadow: 0 0 16px rgba(232,181,72,0.4),  0 0 40px rgba(232,181,72,0.12); }
+
+      .pulse { animation: pulse 2.8s ease-in-out infinite; }
+      @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.55;transform:scale(0.88)} }
+
+      .ball-spin { animation: ballSpin 12s linear infinite; }
+      @keyframes ballSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      .ball-float { animation: ballFloat 3.5s ease-in-out infinite; }
+      @keyframes ballFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+
+      .slide-in { animation: slideIn 0.32s cubic-bezier(0.4,0,0.2,1); }
+      @keyframes slideIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+      .fade-in { animation: fadeIn 0.28s ease; }
+      @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+
+      .shimmer {
+        background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
+        background-size: 200% 100%;
+        animation: shimmer 2s infinite;
+      }
+      @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #2A3038; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #404856; }
+
+      input::placeholder { color: #3A4250; }
+      input:focus { outline: none; border-color: #5FD9C4 !important; box-shadow: 0 0 0 3px rgba(95,217,196,0.12) !important; }
+
+      .section-title {
+        font-size: 10px; color: #5A6270; font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 0.14em; text-transform: uppercase;
+        display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 7px;
+        border-bottom: 1px solid #1E2329;
+      }
+      .section-title::before {
+        content: ''; display: inline-block; width: 3px; height: 12px;
+        border-radius: 2px; background: currentColor; flex-shrink: 0;
+      }
+
+      .scan-line {
+        position: relative; overflow: hidden;
+      }
+      .scan-line::after {
+        content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(95,217,196,0.06), transparent);
+        animation: scanLine 4s ease-in-out infinite;
+      }
+      @keyframes scanLine { 0%{left:-100%} 60%,100%{left:200%} }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+  return null;
+}
+
+/* ---- Pokéball SVG Logo ---- */
+function PokeballLogo({
+  size = 36
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ball-float",
+    style: {
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    width: size,
+    height: size,
+    viewBox: "0 0 48 48",
+    fill: "none",
+    xmlns: "http://www.w3.org/2000/svg",
+    style: {
+      filter: "drop-shadow(0 0 10px rgba(229,72,61,0.7)) drop-shadow(0 0 30px rgba(229,72,61,0.3))"
+    }
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "24",
+    cy: "24",
+    r: "22",
+    fill: "#1A1E26",
+    stroke: "#E5483D",
+    strokeWidth: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M2 24 C2 12 12 3 24 3 C36 3 46 12 46 24Z",
+    fill: "#E5483D"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M8 14 C11 8 17 4 24 3 C18 5 13 9 10 14Z",
+    fill: "rgba(255,255,255,0.15)"
+  }), /*#__PURE__*/React.createElement("rect", {
+    x: "2",
+    y: "22.5",
+    width: "44",
+    height: "3",
+    fill: "#0A0C10"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "24",
+    cy: "24",
+    r: "8",
+    fill: "#0A0C10",
+    stroke: "#E5483D",
+    strokeWidth: "2.5"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "24",
+    cy: "24",
+    r: "4.5",
+    fill: "#1A1E26",
+    stroke: "#E5483D",
+    strokeWidth: "1.5"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "24",
+    cy: "24",
+    r: "2.5",
+    fill: "#E5483D"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "21.5",
+    cy: "21.5",
+    r: "1.2",
+    fill: "rgba(255,255,255,0.6)"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "31",
+    cy: "14",
+    r: "2",
+    fill: "rgba(255,255,255,0.1)"
+  })));
+}
 function App() {
   const [tab, setTab] = useState("dex");
   const [abilityCache, setAbilityCache] = useState({});
@@ -4394,92 +4543,208 @@ function App() {
   const tabs = [{
     id: "dex",
     label: "Pokédex",
-    Icon: BookIcon
+    sub: "Browse & search",
+    Icon: BookIcon,
+    accent: DATA,
+    grad: "linear-gradient(135deg,#5FD9C415,#5FD9C405)"
   }, {
     id: "coverage",
-    label: "Type coverage",
-    Icon: SwordsIcon
+    label: "Type Chart",
+    sub: "Weakness finder",
+    Icon: SwordsIcon,
+    accent: WARN,
+    grad: "linear-gradient(135deg,#E8B54815,#E8B54805)"
   }, {
     id: "team",
-    label: "Team builder",
-    Icon: UsersIcon
+    label: "Team Builder",
+    sub: "Build & analyse",
+    Icon: UsersIcon,
+    accent: SCAN,
+    grad: "linear-gradient(135deg,#E5483D15,#E5483D05)"
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      background: INK,
+      background: "#0A0C10",
       minHeight: "100vh",
-      fontFamily: "Inter, system-ui, sans-serif",
+      fontFamily: "'Inter', system-ui, sans-serif",
       color: CREAM
+    }
+  }, /*#__PURE__*/React.createElement(GlobalStyles, null), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "linear-gradient(180deg, #13161C 0%, rgba(10,12,16,0.95) 100%)",
+      borderBottom: "1px solid #1E2329",
+      padding: "0 16px",
+      position: "sticky",
+      top: 0,
+      zIndex: 50,
+      backdropFilter: "blur(20px)"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 480,
+      maxWidth: 540,
       margin: "0 auto",
-      padding: "18px 16px 60px"
+      padding: "10px 0",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
-      gap: 10,
-      marginBottom: 16
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement(PokeballLogo, {
+    size: 40
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "baseline",
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: MONO,
+      fontSize: 17,
+      fontWeight: 700,
+      letterSpacing: "0.06em",
+      color: CREAM
+    }
+  }, "POKÉDEX"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: MONO,
+      fontSize: 17,
+      fontWeight: 700,
+      color: SCAN
+    }
+  }, "."), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: MONO,
+      fontSize: 17,
+      fontWeight: 700,
+      letterSpacing: "0.06em",
+      color: DATA
+    }
+  }, "GG")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pulse",
+    style: {
+      width: 5,
+      height: 5,
+      borderRadius: "50%",
+      background: DATA,
+      flexShrink: 0
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9.5,
+      color: DIM,
+      fontFamily: MONO,
+      letterSpacing: "0.1em"
+    }
+  }, "LIVE · TERMINAL v2 · ALL GENERATIONS")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-end",
+      gap: 2
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      width: 14,
-      height: 14,
-      borderRadius: "50%",
-      background: SCAN,
-      boxShadow: `0 0 10px ${SCAN}`
+      fontSize: 9,
+      color: "#3A4250",
+      fontFamily: MONO
     }
-  }), /*#__PURE__*/React.createElement("div", {
+  }, "NATIONAL DEX"), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontFamily: MONO,
-      fontSize: 14,
-      letterSpacing: "0.12em",
-      fontWeight: 700
+      fontSize: 13,
+      fontWeight: 700,
+      color: DATA,
+      fontFamily: MONO
     }
-  }, "POKÉDEX TERMINAL")), /*#__PURE__*/React.createElement("div", {
+  }, "1302")))), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: "flex",
-      gap: 4,
-      marginBottom: 18,
-      background: PANEL,
-      borderRadius: 8,
-      padding: 4,
-      border: `1px solid ${LINE}`
+      maxWidth: 540,
+      margin: "0 auto",
+      padding: "0 14px 80px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr 1fr",
+      gap: 8,
+      padding: "14px 0 10px"
     }
   }, tabs.map(t => {
     const active = tab === t.id;
     return /*#__PURE__*/React.createElement("button", {
       key: t.id,
+      className: "tab-btn",
       onClick: () => setTab(t.id),
       style: {
-        flex: 1,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        gap: 3,
-        padding: "8px 4px",
-        borderRadius: 6,
-        border: "none",
+        gap: 6,
+        padding: "13px 6px 11px",
+        borderRadius: 14,
+        border: `1.5px solid ${active ? t.accent + "70" : "#1E2329"}`,
         cursor: "pointer",
-        background: active ? INK : "transparent",
-        color: active ? SCAN : DIM,
-        fontSize: 10.5,
-        fontFamily: MONO,
-        letterSpacing: "0.02em"
+        background: active ? t.grad : "#13161C",
+        color: active ? t.accent : DIM,
+        boxShadow: active ? `0 0 24px ${t.accent}22, inset 0 1px 0 ${t.accent}20` : "0 2px 8px rgba(0,0,0,0.3)",
+        position: "relative",
+        overflow: "hidden"
       }
-    }, /*#__PURE__*/React.createElement(t.Icon, {
-      size: 16
-    }), t.label);
+    }, active && /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: "absolute",
+        top: 0,
+        left: "15%",
+        right: "15%",
+        height: 2,
+        background: `linear-gradient(90deg, transparent, ${t.accent}, transparent)`,
+        borderRadius: "0 0 2px 2px"
+      }
+    }), active && /*#__PURE__*/React.createElement("div", {
+      className: "shimmer",
+      style: {
+        position: "absolute",
+        inset: 0,
+        borderRadius: 12
+      }
+    }), /*#__PURE__*/React.createElement(t.Icon, {
+      size: 19,
+      color: active ? t.accent : "#4A5260"
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        fontWeight: active ? 700 : 500
+      }
+    }, t.label), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 8.5,
+        color: active ? t.accent + "BB" : "#3A4250",
+        fontFamily: MONO,
+        letterSpacing: "0.04em"
+      }
+    }, t.sub));
   })), /*#__PURE__*/React.createElement("div", {
+    key: tab,
+    className: "slide-in scan-line",
     style: {
-      background: PANEL,
-      border: `1px solid ${LINE}`,
-      borderRadius: 10,
-      padding: 16,
-      minHeight: 300
+      background: "linear-gradient(170deg, #161A20 0%, #12151B 100%)",
+      border: "1px solid #1E2329",
+      borderRadius: 18,
+      padding: "18px 16px",
+      minHeight: 340,
+      boxShadow: "0 12px 48px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.04)"
     }
   }, tab === "dex" && /*#__PURE__*/React.createElement(PokedexTab, {
     shared: {
@@ -4491,12 +4756,40 @@ function App() {
   }), tab === "coverage" && /*#__PURE__*/React.createElement(CoverageTab, null), tab === "team" && /*#__PURE__*/React.createElement(TeamBuilderTab, null)), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
-      fontSize: 10.5,
-      color: DIM,
-      marginTop: 14,
+      marginTop: 20,
+      display: "flex",
+      flexDirection: "column",
+      gap: 5,
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement(PokeballLogo, {
+    size: 16
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#2A3038",
+      fontFamily: MONO,
+      letterSpacing: "0.08em"
+    }
+  }, "POKÉDEX.GG · BUILT WITH POKÉAPI")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 10
+    }
+  }, ["Competitive Engine", "AI Analysis", "All Gens"].map(l => /*#__PURE__*/React.createElement("span", {
+    key: l,
+    style: {
+      fontSize: 9,
+      color: "#252B33",
       fontFamily: MONO
     }
-  }, "Live data via PokéAPI · roster saved in this browser")));
+  }, l))))));
 }
 document.getElementById("root").innerHTML = "";
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));
