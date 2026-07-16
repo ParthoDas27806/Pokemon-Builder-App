@@ -528,7 +528,30 @@ function suggestTraining(roles, stats) {
     avoidLabel: rec.avoid ? STAT_FULL[rec.avoid] : null
   };
 }
-// Status moves worth running — must be in actual learnset to be suggested
+function collectCandidateMoveNames(full) {
+  const seen = new Set();
+  const lvl = [];
+  const tm = [];
+  full.moves.forEach(m => {
+    const detail = m.version_group_details[m.version_group_details.length - 1];
+    const method = detail?.move_learn_method?.name;
+    if (seen.has(m.move.name)) return;
+    if (method === "level-up") {
+      lvl.push({
+        name: m.move.name,
+        level: detail.level_learned_at
+      });
+      seen.add(m.move.name);
+    } else if (method === "machine" && tm.length < 20) {
+      tm.push(m.move.name);
+      seen.add(m.move.name);
+    }
+  });
+  lvl.sort((a, b) => b.level - a.level);
+  return [...lvl.slice(0, 15).map(m => m.name), ...tm];
+}
+
+// Status moves worth running in the 4th slot
 const GOOD_STATUS = new Set(["swords-dance", "nasty-plot", "dragon-dance", "bulk-up", "calm-mind", "iron-defense", "agility", "roost", "recover", "soft-boiled", "moonlight", "synthesis", "morning-sun", "toxic", "will-o-wisp", "thunder-wave", "taunt", "protect", "substitute", "stealth-rock", "spikes", "leech-seed", "rest", "sleep-powder", "spore", "haze", "encore", "trick", "tailwind", "trick-room", "quiver-dance", "shell-smash", "coil", "work-up"]);
 function pickMoveset(full, moveDetails) {
   const stats = {};
